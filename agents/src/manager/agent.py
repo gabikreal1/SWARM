@@ -12,6 +12,7 @@ The Manager does NOT bid on jobs - it creates them.
 """
 
 import asyncio
+import hashlib
 import logging
 from typing import Optional
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ from ..shared.config import JobType, JOB_TYPE_LABELS
 from ..shared.wallet import AgentWallet, create_wallet_from_env
 from ..shared.events import EventListener, JobPostedEvent, BidPlacedEvent, DeliverySubmittedEvent
 from ..shared.wallet_tools import get_wallet_tools
+from ..shared.booking import analyze_slots
+from ..shared.bevec import BeVecClient, VectorRecord, create_bevec_client
+from ..shared.embedding import embed_text
+from ..shared.contracts import get_contracts, post_job
 
 from .tools import get_manager_tools
 
@@ -135,6 +140,8 @@ class ManagerAgent:
         self.wallet: Optional[AgentWallet] = None
         self.event_listener: Optional[EventListener] = None
         self.llm_agent: Optional[ToolCallAgent] = None
+        self.vector_client: Optional[BeVecClient] = None
+        self._contracts = None
         
         # Track jobs we're managing
         self.tracked_jobs: dict[int, TrackedJob] = {}
@@ -160,7 +167,22 @@ class ManagerAgent:
         self.event_listener.on_bid_submitted(self._on_bid_submitted)
         self.event_listener.on_delivery_submitted(self._on_delivery_submitted)
         logger.info("  Event listener configured")
-        
+
+        # Initialize vector client (beVec)
+        self.vector_client = create_bevec_client()
+        if self.vector_client:
+            logger.info("  beVec client configured")
+        else:
+            logger.info("  beVec not configured (set BEVEC_ENDPOINT to enable)")
+
+        # Initialize contracts for job posting
+        if self.wallet:
+            try:
+                self._contracts = get_contracts(self.wallet.private_key)
+                logger.info("  Connected to blockchain contracts")
+            except Exception as e:
+                logger.warning(f"  Could not connect to contracts: {e}")
+
         # Initialize LLM agent with tools
         self.llm_agent = await self._create_llm_agent()
         logger.info("  LLM agent initialized")
@@ -173,7 +195,7 @@ class ManagerAgent:
             raise RuntimeError("Wallet must be initialized before creating LLM agent")
         
         # Combine manager tools with wallet tools
-        tools = get_manager_tools(self.wallet) + get_wallet_tools(self.wallet)
+        tools = get_manager_tools(self.wallet, vector_client=self.vector_client) + get_wallet_tools(self.wallet)
         
         agent = ToolCallAgent(
             name=self.agent_name,
@@ -205,6 +227,12 @@ class ManagerAgent:
         if self.event_listener:
             await self.event_listener.stop()
             logger.info("Event listener stopped")
+
+        if self.vector_client:
+            try:
+                await self.vector_client.close()
+            except Exception:
+                pass
     
     # ==========================================================================
     # EVENT HANDLERS
@@ -349,7 +377,151 @@ class ManagerAgent:
     # ==========================================================================
     # PUBLIC API
     # ==========================================================================
-    
+
+    async def plan_booking(
+        self,
+        user_prompt: str,
+        provided_slots: dict | None = None,
+        top_k_experiences: int = 4,
+        top_k_playbooks: int = 2,
+    ) -> dict:
+        """Slot-fill a booking request and gather RAG context."""
+        slot_analysis = analyze_slots(user_prompt, provided_slots)
+        retrieval = await self._retrieve_booking_context(
+            user_prompt=user_prompt,
+            tags=slot_analysis.tags,
+            top_k_experiences=top_k_experiences,
+            top_k_playbooks=top_k_playbooks,
+        )
+
+        return {
+            "slots": slot_analysis.slots,
+            "missing_slots": slot_analysis.missing_slots,
+            "questions": slot_analysis.questions,
+            "tags": slot_analysis.tags,
+            "retrieval": retrieval,
+        }
+
+    async def _retrieve_booking_context(
+        self,
+        user_prompt: str,
+        tags: list[str],
+        top_k_experiences: int = 4,
+        top_k_playbooks: int = 2,
+    ) -> dict:
+        """Query beVec for prior experiences and playbooks to ground planning."""
+        if not self.vector_client:
+            return {
+                "enabled": False,
+                "reason": "BEVEC_ENDPOINT not configured",
+                "experiences": [],
+                "playbooks": [],
+            }
+
+        query_text = f"Restaurant booking intent: {user_prompt}\nTags: {', '.join(tags)}"
+        try:
+            vector = await embed_text(query_text)
+        except Exception as e:
+            return {
+                "enabled": False,
+                "reason": f"Embedding failed: {e}",
+                "experiences": [],
+                "playbooks": [],
+            }
+
+        experiences = []
+        playbooks = []
+
+        try:
+            experiences = [r.__dict__ for r in await self.vector_client.query(
+                collection="user_experiences",
+                vector=vector,
+                top_k=top_k_experiences,
+                tags=tags,
+            )]
+        except Exception as e:
+            logger.warning(f"beVec experiences query failed: {e}")
+
+        try:
+            playbooks = [r.__dict__ for r in await self.vector_client.query(
+                collection="booking_playbooks",
+                vector=vector,
+                top_k=top_k_playbooks,
+                tags=["booking"],
+            )]
+        except Exception as e:
+            logger.warning(f"beVec playbooks query failed: {e}")
+
+        return {
+            "enabled": True,
+            "experiences": experiences,
+            "playbooks": playbooks,
+        }
+
+    async def persist_booking_experience(
+        self,
+        summary: str,
+        metadata: dict,
+        raw_payload: dict | None = None,
+    ) -> dict:
+        """Persist a completed booking experience to NeoFS and beVec."""
+        if not self.vector_client:
+            return {"success": False, "error": "beVec not configured"}
+
+        neofs_uri = None
+        if raw_payload:
+            try:
+                from ..shared.neofs import get_neofs_client
+
+                client = get_neofs_client()
+                result = await client.upload_json(raw_payload, filename="booking-result.json")
+                neofs_uri = f"neofs://{result.container_id}/{result.object_id}"
+            except Exception as e:
+                logger.warning(f"NeoFS upload failed: {e}")
+
+        try:
+            vector = await embed_text(summary)
+        except Exception as e:
+            return {"success": False, "error": f"Embedding failed: {e}"}
+
+        record_id_source = metadata.get("job_id") or metadata.get("user_id") or summary
+        record_id = hashlib.sha256(str(record_id_source).encode("utf-8")).hexdigest()
+
+        enriched_metadata = {**metadata}
+        if neofs_uri:
+            enriched_metadata["source_uri"] = neofs_uri
+
+        try:
+            await self.vector_client.upsert(
+                collection="user_experiences",
+                records=[VectorRecord(id=record_id, vector=vector, metadata=enriched_metadata)],
+            )
+        except Exception as e:
+            return {"success": False, "error": f"beVec upsert failed: {e}"}
+
+        return {
+            "success": True,
+            "record_id": record_id,
+            "source_uri": neofs_uri,
+        }
+
+    async def post_booking_job(
+        self,
+        description: str,
+        job_type: int = JobType.COMPOSITE.value,
+        budget: int = 0,
+        deadline: int = 0,
+    ) -> dict:
+        """Post a booking job to the order book."""
+        if not self._contracts:
+            return {"success": False, "error": "Contracts not initialized"}
+
+        try:
+            job_id = post_job(self._contracts, description, job_type, budget, deadline)
+            return {"success": True, "job_id": job_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def process_request(self, request: str) -> str:
         """
         Process a user request.

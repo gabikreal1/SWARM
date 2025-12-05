@@ -10,6 +10,7 @@ The Manager Agent:
 """
 
 import json
+import hashlib
 import httpx
 from typing import Any, Optional
 from pydantic import Field
@@ -19,6 +20,11 @@ from spoon_ai.tools.base import BaseTool
 from ..shared.config import JobType, JOB_TYPE_LABELS, get_agent_endpoints
 from ..shared.wallet import AgentWallet
 from ..shared.a2a import A2AMessage, A2AMethod, sign_message
+from ..shared.contracts import get_contracts, post_job
+from ..shared.booking import analyze_slots
+from ..shared.bevec import BeVecClient, VectorRecord
+from ..shared.embedding import embed_text
+from ..shared.neofs import get_neofs_client
 
 
 # ==============================================================================
@@ -150,8 +156,243 @@ class DecomposeJobTool(BaseTool):
 
 
 # ==============================================================================
+# BOOKING / RAG TOOLS
+# ==============================================================================
+
+
+class CollectBookingRequirementsTool(BaseTool):
+    """Identify missing booking slots and generate questions for the user."""
+
+    name: str = "collect_booking_requirements"
+    description: str = """
+    Given a user prompt and any known slots, determine which booking details are missing
+    (location, date, time, party_size, budget, cuisine). Returns missing slots and
+    questions to ask the user.
+    """
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "User request"},
+            "slots": {"type": "object", "description": "Known slot values"},
+        },
+        "required": ["prompt"],
+    }
+
+    async def execute(self, prompt: str, slots: dict | None = None) -> str:
+        analysis = analyze_slots(prompt, slots or {})
+        return json.dumps(
+            {
+                "success": True,
+                "slots": analysis.slots,
+                "missing_slots": analysis.missing_slots,
+                "questions": analysis.questions,
+                "tags": analysis.tags,
+            },
+            indent=2,
+        )
+
+
+class BuildBookingContextTool(BaseTool):
+    """Retrieve similar experiences and playbooks from beVec."""
+
+    name: str = "build_booking_context"
+    description: str = """
+    Use beVec to retrieve prior experiences and playbooks relevant to the booking request.
+    Requires BEVEC_ENDPOINT and OPENAI_API_KEY to be configured.
+    """
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "User request"},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Tags to filter vectors (e.g., location, cuisine)",
+            },
+            "top_k_experiences": {"type": "integer", "default": 4},
+            "top_k_playbooks": {"type": "integer", "default": 2},
+        },
+        "required": ["prompt"],
+    }
+
+    def __init__(self, vector_client: Optional[BeVecClient]):
+        super().__init__()
+        self._vector_client = vector_client
+
+    async def execute(
+        self,
+        prompt: str,
+        tags: list[str] | None = None,
+        top_k_experiences: int = 4,
+        top_k_playbooks: int = 2,
+    ) -> str:
+        if not self._vector_client:
+            return json.dumps({"success": False, "error": "beVec not configured"})
+
+        query_text = f"Restaurant booking intent: {prompt}\nTags: {', '.join(tags or [])}"
+        try:
+            vector = await embed_text(query_text)
+        except Exception as e:
+            return json.dumps({"success": False, "error": f"Embedding failed: {e}"})
+
+        try:
+            experiences = [r.__dict__ for r in await self._vector_client.query(
+                collection="user_experiences",
+                vector=vector,
+                top_k=top_k_experiences,
+                tags=tags or ["restaurant", "booking"],
+            )]
+        except Exception as e:
+            experiences = []
+            error = f"Experience query failed: {e}"
+            return json.dumps({"success": False, "error": error})
+
+        try:
+            playbooks = [r.__dict__ for r in await self._vector_client.query(
+                collection="booking_playbooks",
+                vector=vector,
+                top_k=top_k_playbooks,
+                tags=["booking"],
+            )]
+        except Exception as e:
+            playbooks = []
+            return json.dumps({"success": False, "error": f"Playbook query failed: {e}"})
+
+        return json.dumps(
+            {
+                "success": True,
+                "experiences": experiences,
+                "playbooks": playbooks,
+            },
+            indent=2,
+        )
+
+
+class PersistBookingExperienceTool(BaseTool):
+    """Store booking outcomes to NeoFS and beVec for future retrieval."""
+
+    name: str = "persist_booking_experience"
+    description: str = """
+    Persist a booking outcome summary. Uploads raw payload to NeoFS (if provided) and
+    upserts an embedding into the beVec `user_experiences` collection.
+    """
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string", "description": "Short summary of the experience"},
+            "metadata": {"type": "object", "description": "Metadata tags (location, cuisine, job_id, rating, etc.)"},
+            "raw_payload": {"type": "object", "description": "Optional full result document"},
+        },
+        "required": ["summary", "metadata"],
+    }
+
+    def __init__(self, vector_client: Optional[BeVecClient]):
+        super().__init__()
+        self._vector_client = vector_client
+
+    async def execute(self, summary: str, metadata: dict, raw_payload: dict | None = None) -> str:
+        if not self._vector_client:
+            return json.dumps({"success": False, "error": "beVec not configured"})
+
+        neofs_uri = None
+        if raw_payload:
+            try:
+                client = get_neofs_client()
+                result = await client.upload_json(raw_payload, filename="booking-result.json")
+                neofs_uri = f"neofs://{result.container_id}/{result.object_id}"
+            except Exception as e:
+                neofs_uri = None
+                # Continue even if NeoFS write fails
+
+        try:
+            vector = await embed_text(summary)
+        except Exception as e:
+            return json.dumps({"success": False, "error": f"Embedding failed: {e}"})
+
+        record_id_source = metadata.get("job_id") or metadata.get("user_id") or summary
+        record_id = hashlib.sha256(str(record_id_source).encode("utf-8")).hexdigest()
+
+        enriched_metadata = {**metadata}
+        if neofs_uri:
+            enriched_metadata["source_uri"] = neofs_uri
+
+        try:
+            await self._vector_client.upsert(
+                collection="user_experiences",
+                records=[VectorRecord(id=record_id, vector=vector, metadata=enriched_metadata)],
+            )
+        except Exception as e:
+            return json.dumps({"success": False, "error": f"beVec upsert failed: {e}"})
+
+        return json.dumps(
+            {
+                "success": True,
+                "record_id": record_id,
+                "source_uri": neofs_uri,
+            },
+            indent=2,
+        )
+
+
+# ==============================================================================
 # BID MANAGEMENT TOOLS
 # ==============================================================================
+
+
+class PostJobTool(BaseTool):
+    """Post a job to the OrderBook contract."""
+
+    name: str = "post_job"
+    description: str = """
+    Post a job to the OrderBook smart contract. Budget should be in USDC micro-units
+    (1 USDC = 1_000_000). If you only have a float budget_usdc, provide that instead
+    and it will be converted.
+    """
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "description": {"type": "string", "description": "Job description"},
+            "job_type": {"type": "integer", "description": "JobType enum id", "default": JobType.COMPOSITE.value},
+            "budget": {"type": "integer", "description": "Budget in micro USDC", "default": 0},
+            "budget_usdc": {"type": "number", "description": "Budget in USDC (will be converted)", "default": 0},
+            "deadline": {"type": "integer", "description": "Deadline in seconds", "default": 0},
+        },
+        "required": ["description"],
+    }
+
+    def __init__(self, wallet: AgentWallet):
+        super().__init__()
+        self._wallet = wallet
+
+    async def execute(
+        self,
+        description: str,
+        job_type: int = JobType.COMPOSITE.value,
+        budget: int = 0,
+        budget_usdc: float = 0,
+        deadline: int = 0,
+    ) -> str:
+        if not self._wallet:
+            return json.dumps({"success": False, "error": "Wallet not configured"})
+
+        try:
+            contracts = get_contracts(self._wallet.private_key)
+        except Exception as e:
+            return json.dumps({"success": False, "error": f"Contract setup failed: {e}"})
+
+        resolved_budget = budget or int(budget_usdc * 1_000_000)
+        try:
+            job_id = post_job(contracts, description, job_type, resolved_budget, deadline)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+        return json.dumps({
+            "success": True,
+            "job_id": job_id,
+            "job_type": job_type,
+            "budget": resolved_budget,
+            "deadline": deadline,
+        }, indent=2)
 
 class GetBidsForJobTool(BaseTool):
     """
@@ -691,7 +932,7 @@ class GetAgentEndpointsTool(BaseTool):
 # TOOL FACTORY
 # ==============================================================================
 
-def get_manager_tools(wallet: AgentWallet) -> list[BaseTool]:
+def get_manager_tools(wallet: AgentWallet, vector_client: Optional[BeVecClient] = None) -> list[BaseTool]:
     """
     Get all tools for the Manager Agent.
     
@@ -701,11 +942,16 @@ def get_manager_tools(wallet: AgentWallet) -> list[BaseTool]:
     Returns:
         List of configured tools
     """
-    return [
+    tools: list[BaseTool] = [
+        # Booking + RAG helpers
+        CollectBookingRequirementsTool(),
+        BuildBookingContextTool(vector_client),
+        
         # Job decomposition
         DecomposeJobTool(),
         
-        # Bid management
+        # Job posting / bid management
+        PostJobTool(wallet),
         GetBidsForJobTool(wallet),
         SelectBestBidTool(),
         AcceptBidTool(wallet),
@@ -719,3 +965,8 @@ def get_manager_tools(wallet: AgentWallet) -> list[BaseTool]:
         GetJobDetailsTool(wallet),
         GetAgentEndpointsTool(),
     ]
+
+    if vector_client:
+        tools.append(PersistBookingExperienceTool(vector_client))
+
+    return tools

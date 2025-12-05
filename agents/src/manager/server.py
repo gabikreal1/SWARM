@@ -9,7 +9,7 @@ import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from ..shared.a2a import (
     create_error_response,
     create_success_response,
 )
+from ..shared.config import JobType
 
 from .agent import ManagerAgent, create_manager_agent
 
@@ -112,6 +113,24 @@ class StatusResponse(BaseModel):
     wallet_address: Optional[str] = None
     tracked_jobs: int = 0
     event_listener_running: bool = False
+
+
+class BookingPlanRequest(BaseModel):
+    """Request to plan a restaurant booking flow."""
+    prompt: str
+    slots: Optional[Dict[str, str]] = None
+    top_k_experiences: int = 4
+    top_k_playbooks: int = 2
+    auto_post_job: bool = False
+    budget_usdc: Optional[float] = None
+    deadline_seconds: Optional[int] = None
+
+
+class BookingExperienceRequest(BaseModel):
+    """Persist booking experience into beVec/NeoFS."""
+    summary: str
+    metadata: Dict[str, str]
+    raw_payload: Optional[dict] = None
 
 
 # ==============================================================================
@@ -269,6 +288,62 @@ async def handle_process_request(message: A2AMessage) -> A2AResponse:
             A2AErrorCode.INTERNAL_ERROR,
             str(e)
         )
+
+
+# ============================================================================
+# BOOKING WORKFLOW ENDPOINTS (no frontend needed)
+# ============================================================================
+
+
+@app.post("/booking/plan")
+async def plan_booking(request: BookingPlanRequest):
+    """Plan a booking request, retrieve RAG context, optionally post a job."""
+    global agent
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    plan = await agent.plan_booking(
+        user_prompt=request.prompt,
+        provided_slots=request.slots,
+        top_k_experiences=request.top_k_experiences,
+        top_k_playbooks=request.top_k_playbooks,
+    )
+
+    if request.auto_post_job and not plan.get("missing_slots"):
+        # Build a job description from filled slots
+        slots = plan.get("slots", {})
+        description_parts = [request.prompt]
+        if slots:
+            description_parts.append("Slots: " + ", ".join(f"{k}={v}" for k, v in slots.items() if k != "prompt"))
+        description = " | ".join(description_parts)
+
+        budget_micro = int(request.budget_usdc * 1_000_000) if request.budget_usdc else 0
+        deadline = request.deadline_seconds or 0
+        job_response = await agent.post_booking_job(
+            description=description,
+            job_type=JobType.COMPOSITE.value,
+            budget=budget_micro,
+            deadline=deadline,
+        )
+        plan["job"] = job_response
+
+    return plan
+
+
+@app.post("/booking/experience")
+async def persist_booking_experience(request: BookingExperienceRequest):
+    """Persist a booking outcome into beVec and NeoFS."""
+    global agent
+
+    if not agent:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    return await agent.persist_booking_experience(
+        summary=request.summary,
+        metadata=request.metadata,
+        raw_payload=request.raw_payload,
+    )
 
 
 # ==============================================================================
