@@ -1,0 +1,226 @@
+        except Exception as exc:
+            logger.debug("Qdrant upsert failed: %s", exc)
+
+    def search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[TemplateRecord]:
+        if not self.client:
+            return []
+        vector = self.embedder.embed(query)
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue  # type: ignore
+        except Exception:
+            return []
+
+        conditions = []
+        if user_id:
+            conditions.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+        else:
+            # allow global anonymized entries too
+            conditions.append(FieldCondition(key="privacy", match=MatchValue(value="anonymized")))
+
+        query_filter = Filter(must=conditions) if conditions else None
+
+        try:
+            results = self.client.search(
+                collection_name=self.collection,
+                query_vector=vector,
+                limit=limit,
+                query_filter=query_filter,
+            )
+        except Exception as exc:
+            logger.debug("Qdrant search failed: %s", exc)
+            return []
+
+        parsed: List[TemplateRecord] = []
+        for hit in results or []:
+            payload = getattr(hit, "payload", {}) or {}
+            blob = payload.get("blob")
+            score = getattr(hit, "score", None)
+            rec = TemplateRecord.from_text(blob, similarity=score if score is not None else 1.0) if blob else None
+            if rec:
+                parsed.append(rec)
+        return parsed
+
+
+# ----------------------------
+# Slot filling core
+# ----------------------------
+
+
+class SlotFiller:
+    """Determines missing slots and clarifying questions using tools + memory."""
+
+    def __init__(
+        self,
+        user_id: Optional[str] = None,
+        max_questions: int = 3,
+        min_memory_hits: int = 2,
+    ) -> None:
+        self.user_id = user_id
+        self.max_questions = max_questions
+        self.min_memory_hits = min_memory_hits
+        self.memory = TemplateMemory(user_id=user_id)
+        self.embedder = EmbeddingModel()
+        self.qdrant_store = QdrantTemplateStore(self.embedder)
+
+    def fill(
+        self,
+        user_message: str,
+        current_slots: Dict[str, Any],
+        candidate_tools: Sequence[Dict[str, Any]],
+        chosen_tool: Optional[str] = None,
+    ) -> Tuple[List[str], List[str], str]:
+        """
+        Returns (missing_slots_ranked, questions, chosen_tool_name).
+        """
+        chosen_tool_name = self._choose_tool(candidate_tools, chosen_tool)
+        required_slots = self._collect_required_slots(user_message, candidate_tools, chosen_tool_name)
+        missing_slots = self._rank_missing_slots(required_slots, current_slots, chosen_tool_name)
+        questions = [InputSlot(name=s).make_question() for s in missing_slots[: self.max_questions]]
+        return missing_slots, questions, chosen_tool_name
+
+    def store_success(
+        self,
+        task_summary: str,
+        final_slots: Dict[str, Any],
+        questions_asked: List[str],
+        chosen_tool: str,
+        success: bool = True,
+    ) -> None:
+        """Persist a completed template to memory."""
+        record = TemplateRecord(
+            task_summary=task_summary,
+            final_slots=final_slots,
+            questions_asked=questions_asked,
+            chosen_tool=chosen_tool,
+            success=success,
+        )
+        try:
+            self.memory.store(record)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Storing success template failed: %s", exc)
+
+    # Internal helpers
+
+    def _choose_tool(
+        self, candidate_tools: Sequence[Dict[str, Any]], chosen_tool: Optional[str]
+    ) -> str:
+        if chosen_tool:
+            return chosen_tool
+        if candidate_tools:
+            return str(candidate_tools[0].get("name", "unknown_tool"))
+        return "unknown_tool"
+
+    def _collect_required_slots(
+        self,
+        user_message: str,
+        candidate_tools: Sequence[Dict[str, Any]],
+        chosen_tool: str,
+    ) -> Dict[str, float]:
+        """
+        Aggregate required slots from the chosen tool and memory-derived templates.
+        Returns a mapping of slot -> base weight.
+        """
+        required: Dict[str, float] = {}
+
+        # Tool-required slots (highest base weight)
+        for tool in candidate_tools:
+            if str(tool.get("name")) != chosen_tool:
+                continue
+            for param in tool.get("required_params", []):
+                required[str(param)] = max(required.get(str(param), 0.0), 1.0)
+
+        # Memory-derived slots
+        templates = self.memory.search(user_message, min_hits=self.min_memory_hits)
+        if templates:
+            slot_scores = self._score_from_templates(templates, user_message)
+            for slot, score in slot_scores.items():
+                required[slot] = max(required.get(slot, 0.0), score)
+
+        return required
+
+    def _score_from_templates(
+        self, templates: Sequence[TemplateRecord], query: str
+    ) -> Dict[str, float]:
+        query_emb = self.embedder.embed(query)
+        scores: Dict[str, float] = {}
+        total_sim: Dict[str, float] = {}
+
+        for tmpl in templates:
+            # Prefer provided similarity; otherwise compute embedding similarity.
+            sim = float(tmpl.similarity or 0.0)
+            if sim <= 0:
+                tmpl_emb = self.embedder.embed(tmpl.build_query_text())
+                sim = self.embedder.cosine(query_emb, tmpl_emb)
+            sim = max(sim, 0.0001)
+            for slot in tmpl.final_slots.keys():
+                scores[slot] = scores.get(slot, 0.0) + sim
+                total_sim[slot] = total_sim.get(slot, 0.0) + sim
+
+        ranked: Dict[str, float] = {}
+        for slot, accum in scores.items():
+            denom = total_sim.get(slot, 1.0)
+            ranked[slot] = accum / denom if denom else 0.0
+        return ranked
+
+    def _rank_missing_slots(
+        self, required_slots: Dict[str, float], current_slots: Dict[str, Any], chosen_tool: str
+    ) -> List[str]:
+        """Rank missing slots with tool-required slots first, then by memory score."""
+        missing: List[Tuple[str, float, bool]] = []
+
+        for slot, score in required_slots.items():
+            value = current_slots.get(slot)
+            if value not in (None, "", False):
+                continue
+            # Tool-required slots get a bump
+            tool_required = score >= 0.999
+            adjusted_score = score + (2.0 if tool_required else 0.0)
+            missing.append((slot, adjusted_score, tool_required))
+
+        # Sort: tool-required first, then by score desc, then name
+        missing.sort(key=lambda item: (-item[2], -item[1], item[0]))
+        return [slot for slot, _, _ in missing]
+
+
+# ----------------------------
+# CLI-style demo
+# ----------------------------
+
+
+def _demo() -> None:
+    """Run a minimal demo in CLI style."""
+    candidate_tools = [
+        {"name": "book_flight", "required_params": ["origin", "destination", "date"]},
+        {"name": "check_weather", "required_params": ["location", "date"]},
+    ]
+    user_message = "I need to book a trip to Paris next month."
+    current_slots = {"destination": "Paris"}  # already known
+
+    filler = SlotFiller(user_id="demo_user")
+    missing_slots, questions, chosen_tool = filler.fill(
+        user_message=user_message,
+        current_slots=current_slots,
+        candidate_tools=candidate_tools,
+        chosen_tool="book_flight",
+    )
+
+    print("Chosen tool:", chosen_tool)
+    print("Missing slots (ranked):", missing_slots)
+    print("Questions to ask:")
+    for q in questions:
+        print("-", q)
+
+    # Simulate success and store a template
+    final_slots = {**current_slots, "origin": "NYC", "date": "2025-12-15"}
+    filler.store_success(
+        task_summary="Booked a flight to Paris next month.",
+        final_slots=final_slots,
+        questions_asked=questions,
+        chosen_tool=chosen_tool,
+        success=True,
+    )
+
+
+if __name__ == "__main__":
+    _demo()
+
