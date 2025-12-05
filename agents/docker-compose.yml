@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: archive-manager
+    command: python -m agents manager
+    ports:
+      - "3001:3001"
+    environment:
+      - MANAGER_PORT=3001
+      - NEOX_RPC_URL=${NEOX_RPC_URL}
+      - MANAGER_PRIVATE_KEY=${MANAGER_PRIVATE_KEY}
+      - ORDERBOOK_ADDRESS=${ORDERBOOK_ADDRESS}
+      - AGENT_REGISTRY_ADDRESS=${AGENT_REGISTRY_ADDRESS}
+      - ESCROW_ADDRESS=${ESCROW_ADDRESS}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEOFS_ENDPOINT=${NEOFS_ENDPOINT}
+      - NEOFS_CONTAINER_ID=${NEOFS_CONTAINER_ID}
+      - SCRAPER_ENDPOINT=http://scraper:3002
+      - CALLER_ENDPOINT=http://caller:3003
+    depends_on:
+      - scraper
+      - caller
+    networks:
+      - archive-network
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: archive-scraper
+    command: python -m agents scraper
+    ports:
+      - "3002:3002"
+    environment:
+      - SCRAPER_PORT=3002
+      - NEOX_RPC_URL=${NEOX_RPC_URL}
+      - SCRAPER_PRIVATE_KEY=${SCRAPER_PRIVATE_KEY}
+      - ORDERBOOK_ADDRESS=${ORDERBOOK_ADDRESS}
+      - BRIGHT_DATA_API_KEY=${BRIGHT_DATA_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEOFS_ENDPOINT=${NEOFS_ENDPOINT}
+      - NEOFS_CONTAINER_ID=${NEOFS_CONTAINER_ID}
+    networks:
+      - archive-network
+
+  caller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: archive-caller
+    command: python -m agents caller
+    ports:
+      - "3003:3003"
+    environment:
+      - CALLER_PORT=3003
+      - NEOX_RPC_URL=${NEOX_RPC_URL}
+      - CALLER_PRIVATE_KEY=${CALLER_PRIVATE_KEY}
+      - ORDERBOOK_ADDRESS=${ORDERBOOK_ADDRESS}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEOFS_ENDPOINT=${NEOFS_ENDPOINT}
+      - NEOFS_CONTAINER_ID=${NEOFS_CONTAINER_ID}
+    networks:
+      - archive-network
+
+networks:
+  archive-network:
+    driver: bridge

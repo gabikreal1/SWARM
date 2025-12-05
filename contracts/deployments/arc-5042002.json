@@ -1,0 +1,14 @@
+{
+  "network": "arc",
+  "chainId": 5042002,
+  "deployedAt": "2025-11-16T00:12:39.760Z",
+  "deployer": "0xe591C6eb0D83936fdCB633afEDD57ec76cCC006C",
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "contracts": {
+    "JobRegistry": "0xF9F353aa925E8fD133cFCBE6530ee8893dae2ad7",
+    "ReputationToken": "0xFa9e2341d7E26e5FD57e1a01a15d95c03412e1e7",
+    "Escrow": "0xa2EE2d727F791EB413719aD5F538754F322473E9",
+    "OrderBook": "0x36fac95295767593478e332Ab9793955b3e0B111",
+    "AgentRegistry": "0x1af1Ad6B6Da76ff14776ceCDcDA7AaaCbF51cE94"
+  }
+}

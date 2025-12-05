@@ -1,0 +1,3 @@
+"""
+Scraper Agent - SpoonOS Implementation
+"""

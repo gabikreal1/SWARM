@@ -1,0 +1,24 @@
+# SpoonOS Framework
+spoon-ai-sdk>=0.1.0
+spoon-toolkits>=0.1.0
+
+# Web3 / Blockchain
+web3>=7.0.0
+eth-account>=0.13.0
+
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.9.0
+httpx>=0.27.0
+aiohttp>=3.10.0
+
+# Agent-specific
+twilio>=9.3.0  # For Caller Agent
+
+# Server
+uvicorn>=0.32.0
+fastapi>=0.115.0
+
+# Dev
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
