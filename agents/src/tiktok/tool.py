@@ -62,3 +62,8 @@ class TikTokSearchTool(BaseTool):
                 "snapshot_id": data.get("snapshot_id"),
             }
         )
+
+
+def create_tiktok_tools() -> list[BaseTool]:
+    """Factory to provide all TikTok tools for SpoonOS agents."""
+    return [TikTokSearchTool(), TikTokScrapeTool()]

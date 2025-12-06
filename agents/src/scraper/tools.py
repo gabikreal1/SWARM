@@ -50,6 +50,14 @@ class TikTokScrapeTool(BaseTool):
                 "type": "string",
                 "description": "Optional explicit TikTok URL to scrape (video or discover)"
             },
+            "profile_url": {
+                "type": "string",
+                "description": "TikTok profile URL to scrape posts from"
+            },
+            "hashtags": {
+                "type": "string",
+                "description": "Comma-separated hashtags to filter returned videos (e.g. 'food,travel')."
+            },
             "max_results": {
                 "type": "integer",
                 "description": "Maximum number of results to return (default: 10, max: 50)"
@@ -59,13 +67,15 @@ class TikTokScrapeTool(BaseTool):
                 "description": "Optional location filter (e.g., 'Russia', 'Moscow')"
             }
         },
-        "required": ["search_query"]
+        "required": []
     }
     
     async def execute(
         self, 
-        search_query: str, 
+        search_query: str = "", 
         tiktok_url: str = None,
+        profile_url: str = None,
+        hashtags: str = "",
         max_results: int = 10,
         location: str = None
     ) -> str:
@@ -78,22 +88,34 @@ class TikTokScrapeTool(BaseTool):
                 {"success": False, "error": "BRIGHT_DATA_API_KEY not configured"}
             )
 
+        if not search_query and not tiktok_url and not profile_url:
+            return json.dumps(
+                {"success": False, "error": "Provide search_query or tiktok_url or profile_url"}
+            )
+
         max_results = min(max_results, 50)  # Cap at 50
 
         try:
+            # Choose discover mode
+            discover_by = "profile_url" if profile_url else "url"
+
             api_url = (
                 "https://api.brightdata.com/datasets/v3/scrape"
                 f"?dataset_id={dataset_id}"
-                "&notify=false&include_errors=true&type=discover_new&discover_by=url"
+                "&notify=false&include_errors=true&type=discover_new"
+                f"&discover_by={discover_by}"
+                f"&limit_per_input={max_results}"
             )
 
             # Build input URLs
             inputs = []
             if search_query:
                 tiktok_search_url = f"https://www.tiktok.com/search?q={search_query.replace(' ', '+')}"
-                inputs.append({"URL": tiktok_search_url})
+                inputs.append({"url": tiktok_search_url})
             if tiktok_url:
-                inputs.append({"URL": tiktok_url})
+                inputs.append({"url": tiktok_url})
+            if profile_url:
+                inputs.append({"url": profile_url})
 
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
@@ -105,16 +127,85 @@ class TikTokScrapeTool(BaseTool):
                     json={"input": inputs},
                 )
                 response.raise_for_status()
+
+                # Bright Data sometimes replies with JSONL; parse accordingly
+                content_type = response.headers.get("content-type", "")
+                if "jsonl" in content_type:
+                    parsed_lines = self._parse_jsonl(response.text)
+                    first = parsed_lines[0] if parsed_lines else {}
+                    # If error in first line, return it
+                    if first.get("error"):
+                        return json.dumps(
+                            {
+                                "success": False,
+                                "error": first.get("error"),
+                                "error_code": first.get("error_code"),
+                                "dataset_id": dataset_id,
+                                "query": search_query,
+                                "url": tiktok_url or profile_url or inputs[0].get("url"),
+                            },
+                            indent=2,
+                        )
+                    parsed_lines = self._filter_by_hashtags(parsed_lines, hashtags)
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "query": search_query,
+                            "location": location,
+                            "dataset_id": dataset_id,
+                            "results": parsed_lines,
+                        },
+                        indent=2,
+                    )
+
                 data = response.json()
 
-                # data may include result id or records directly; return raw payload
+                # If Bright Data returns snapshot_id (async), poll until ready
+                snapshot_id = data.get("snapshot_id")
+                if snapshot_id:
+                    ready = await self._poll_snapshot(client, api_token, snapshot_id)
+                    ready_results = ready.get("data") or ready.get("result") or ready
+                    ready_results = self._filter_by_hashtags(
+                        ready_results if isinstance(ready_results, list) else [ready_results],
+                        hashtags,
+                    )
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "query": search_query,
+                            "location": location,
+                            "dataset_id": dataset_id,
+                            "snapshot_id": snapshot_id,
+                            "results": ready_results,
+                            "status": ready.get("status", "ready"),
+                        },
+                        indent=2,
+                    )
+
+                # If immediate error
+                if data.get("error"):
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": data.get("error"),
+                            "error_code": data.get("error_code"),
+                            "dataset_id": dataset_id,
+                        },
+                        indent=2,
+                    )
+
+                # Return whatever payload came back
+                filtered = self._filter_by_hashtags(
+                    data if isinstance(data, list) else [data],
+                    hashtags,
+                )
                 return json.dumps(
                     {
                         "success": True,
                         "query": search_query,
                         "location": location,
                         "dataset_id": dataset_id,
-                        "result": data,
+                        "results": filtered,
                     },
                     indent=2,
                 )
@@ -123,6 +214,56 @@ class TikTokScrapeTool(BaseTool):
             return json.dumps({"success": False, "error": f"HTTP error: {str(e)}"})
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
+
+    def _parse_jsonl(self, text: str) -> list:
+        """Parse JSONL content into a list of dicts."""
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        out = []
+        for ln in lines:
+            try:
+                out.append(json.loads(ln))
+            except json.JSONDecodeError:
+                out.append({"raw": ln, "parse_error": True})
+        return out
+
+    def _filter_by_hashtags(self, results: list, hashtags: str) -> list:
+        """Filter results to only those containing any of the specified hashtags."""
+        tags = [t.strip().lstrip("#").lower() for t in hashtags.split(",") if t.strip()]
+        if not tags:
+            return results
+
+        filtered = []
+        for item in results:
+            item_tags = item.get("hashtags") or []
+            normalized = [t.lstrip("#").lower() for t in item_tags if isinstance(t, str)]
+            if any(tag in normalized for tag in tags):
+                filtered.append(item)
+        return filtered
+
+    async def _poll_snapshot(
+        self,
+        client: httpx.AsyncClient,
+        api_token: str,
+        snapshot_id: str,
+        max_attempts: int = 10,
+        delay_seconds: float = 5.0,
+    ) -> dict:
+        """Poll Bright Data snapshot until ready or timeout."""
+        url = f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}"
+        for attempt in range(max_attempts):
+            resp = await client.get(url, headers={"Authorization": f"Bearer {api_token}"})
+            if resp.status_code != 200:
+                await asyncio.sleep(delay_seconds)
+                continue
+            content_type = resp.headers.get("content-type", "")
+            if "jsonl" in content_type:
+                parsed = self._parse_jsonl(resp.text)
+                return {"status": "ready", "data": parsed}
+            data = resp.json()
+            if data.get("status") == "ready":
+                return data
+            await asyncio.sleep(delay_seconds)
+        return {"status": "timeout", "snapshot_id": snapshot_id}
     
     async def _poll_for_results(
         self, 

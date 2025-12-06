@@ -24,7 +24,10 @@ def load_abi(contract_name: str) -> list:
     abi_path = Path(__file__).parent.parent.parent.parent / "contracts" / "integrations" / "spoon" / "abi" / f"{contract_name}.json"
     if abi_path.exists():
         with open(abi_path, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict) and "abi" in data:
+                return data["abi"]
+            return data
     raise FileNotFoundError(f"ABI not found: {abi_path}")
 
 
