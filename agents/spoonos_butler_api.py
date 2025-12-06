@@ -10,7 +10,7 @@ import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from dotenv import load_dotenv
 
 # Add SWARM root to path
@@ -48,6 +48,11 @@ slot_filler: Optional[SlotFiller] = None
 qdrant_client: Optional[QdrantClient] = None
 mem0_client: Optional[MemoryClient] = None
 neofs_client: Optional[NeoFSClient] = None
+best_bids: Dict[int, Dict] = {}
+BUTLER_WALLET_ADDRESS = os.getenv(
+    "BUTLER_WALLET_ADDRESS",
+    "0x741ae17d47d479e878adfb3c78b02db583c63d58",
+)
 
 
 class InquireRequest(BaseModel):
@@ -64,6 +69,10 @@ class QuoteRequest(BaseModel):
 class ConfirmRequest(BaseModel):
     jobId: int
     bidId: int
+
+
+class PaymentConfirmRequest(BaseModel):
+    txHash: str
 
 
 @app.on_event("startup")
@@ -273,6 +282,11 @@ async def get_quote(request: QuoteRequest):
             }
 
         best_bid = sorted(valid_bids, key=lambda x: x["price"])[0]
+        best_bids[job_id] = {
+            "bid_id": best_bid["id"],
+            "price_micro": int(round(best_bid["price"] * 1_000_000)),
+            "bidder": best_bid["bidder"],
+        }
         return {
             "text": (
                 f"I posted your job (id {job_id}). Best offer is {best_bid['price']:.2f} USDC "
@@ -316,6 +330,72 @@ async def confirm_bid(request: ConfirmRequest):
     except Exception as e:
         print(f"❌ Accept Bid Failed: {e}")
         raise HTTPException(500, f"Failed to accept bid: {e}")
+
+
+@app.post("/api/spoonos/confirm-payment")
+async def confirm_payment(request: PaymentConfirmRequest):
+    """Verify user mUSDC transfer to Butler, then accept the cached best bid on-chain."""
+    if not contracts:
+        raise HTTPException(503, "Blockchain not connected")
+
+    if not best_bids:
+        raise HTTPException(400, "No cached bid available to confirm")
+
+    # Use the most recent job's best bid
+    latest_job_id = sorted(best_bids.keys())[-1]
+    stored = best_bids[latest_job_id]
+    bid_id = stored.get("bid_id")
+    expected_amount = stored.get("price_micro")
+
+    try:
+        tx = contracts.w3.eth.get_transaction(request.txHash)
+    except Exception as e:
+        raise HTTPException(400, f"Unable to fetch transaction: {e}")
+
+    if tx.to is None or tx.to.lower() != contracts.usdc.address.lower():
+        raise HTTPException(400, "Transaction is not to USDC contract")
+
+    try:
+        fn, params = contracts.usdc.decode_function_input(tx.input)
+    except Exception as e:
+        raise HTTPException(400, f"Cannot decode tx input: {e}")
+
+    if fn.fn_name != "transfer":
+        raise HTTPException(400, "Transaction is not a USDC transfer")
+
+    to_addr = params.get("to")
+    value = params.get("value")
+
+    if to_addr.lower() != BUTLER_WALLET_ADDRESS.lower():
+        raise HTTPException(400, "USDC transfer not sent to Butler wallet")
+
+    if expected_amount and int(value) < int(expected_amount):
+        raise HTTPException(400, "Transferred amount is less than required bid price")
+
+    print(
+        f"✅ Payment verified: from {tx['from']} to {to_addr} amount {value} (expected >= {expected_amount})"
+    )
+
+    try:
+        tx_hash = accept_bid(
+            contracts,
+            job_id=latest_job_id,
+            bid_id=bid_id,
+            response_uri="ipfs://response",
+        )
+        explorer_base = os.getenv("EXPLORER_BASE_URL", "https://neoxplorer.io/tx/")
+        explorer_url = f"{explorer_base.rstrip('/')}/{tx_hash}"
+        return {
+            "text": (
+                f"Payment received and bid {bid_id} accepted for job {latest_job_id}. "
+                f"Tx: {tx_hash}. Explorer: {explorer_url}"
+            ),
+            "tx": tx_hash,
+            "explorer": explorer_url,
+        }
+    except Exception as e:
+        print(f"❌ Accept Bid after payment failed: {e}")
+        raise HTTPException(500, f"Failed to accept bid after payment: {e}")
 
 
 if __name__ == "__main__":
