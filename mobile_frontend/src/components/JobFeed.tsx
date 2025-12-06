@@ -9,20 +9,5 @@ const MOCK_JOBS = [
 ];
 
 export const JobFeed: React.FC = () => {
-  return (
-    <div className="card job-feed">
-      <div className="card-header">Swarm Activity</div>
-      <div className="card-body">
-        {MOCK_JOBS.map((job) => (
-          <div key={job.id} className="job-row">
-            <span className="job-icon">{job.icon}</span>
-            <div className="job-main">
-              <div className="job-label">{job.label}</div>
-              <div className="job-meta">Job #{job.id}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return null;
 };

@@ -1,26 +1,32 @@
-# SpoonOS Framework
-spoon-ai-sdk>=0.1.0
-spoon-toolkits>=0.1.0
-
-# Web3 / Blockchain
+# Web3 / Blockchain (Butler + Worker)
 web3>=7.0.0
 eth-account>=0.13.0
 
-# Core
+# Core (All scripts)
 python-dotenv>=1.0.0
 pydantic>=2.9.0
-httpx>=0.27.0
-aiohttp>=3.10.0
 
-# Agent-specific
-twilio>=9.3.0  # For Caller Agent
-
-# Server
+# Server (Butler API)
 uvicorn>=0.32.0
 fastapi>=0.115.0
 
-# Embeddings / Vectors
+# AI / Vector DB (Butler + Seeding)
 openai>=1.50.0
+qdrant-client>=1.7.0
+mem0ai>=0.0.10
+
+# Storage (NeoFS via REST Gateway)
+requests>=2.31.0
+
+# SpoonOS Agent Framework (for real Butler agent)
+spoon-ai>=0.1.0
+
+# Agent tools - HTTP requests
+httpx>=0.27.0
+aiohttp>=3.10.0
+
+# Optional: Agent-specific tools
+# twilio>=9.3.0  # For Caller Agent
 
 # Dev
 pytest>=8.0.0

@@ -1,0 +1,13 @@
+{
+  "constraints": {
+    "budget": 50,
+    "max_time": 3600
+  },
+  "description": "Scrape 100 TikTok posts from @elonmusk",
+  "job_id": 123,
+  "requirements": {
+    "count": 100,
+    "tool": "tiktok_scrape",
+    "username": "@elonmusk"
+  }
+}

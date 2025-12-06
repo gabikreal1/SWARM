@@ -59,7 +59,27 @@ def get_network() -> NetworkConfig:
 
 
 def get_contract_addresses() -> ContractAddresses:
-    """Get contract addresses from environment"""
+    """Get contract addresses from environment or deployment file"""
+    # Try env vars first
+    order_book = os.getenv("ORDERBOOK_ADDRESS")
+    
+    # If not in env, try loading from deployment file
+    if not order_book:
+        import json
+        from pathlib import Path
+        deployment_file = Path(__file__).parent.parent.parent.parent / "contracts" / "deployments" / "neox-testnet-12227332.json"
+        if deployment_file.exists():
+            with open(deployment_file) as f:
+                data = json.load(f)
+                return ContractAddresses(
+                    order_book=data["contracts"]["OrderBook"],
+                    escrow=data["contracts"]["Escrow"],
+                    job_registry=data["contracts"]["JobRegistry"],
+                    agent_registry=data["contracts"]["AgentRegistry"],
+                    reputation_token=data["contracts"]["ReputationToken"],
+                    usdc=data["usdc"],
+                )
+    
     return ContractAddresses(
         order_book=os.getenv("ORDERBOOK_ADDRESS", ""),
         escrow=os.getenv("ESCROW_ADDRESS", ""),
@@ -108,6 +128,8 @@ AGENT_CAPABILITIES = {
 def get_private_key(agent_type: str) -> Optional[str]:
     """Get the private key for a specific agent type"""
     key_map = {
+        "butler": "NEOX_PRIVATE_KEY",  # User/Butler wallet
+        "worker": "WORKER_PRIVATE_KEY",  # Generic worker
         "manager": "MANAGER_PRIVATE_KEY",
         "scraper": "SCRAPER_PRIVATE_KEY",
         "caller": "CALLER_PRIVATE_KEY",
