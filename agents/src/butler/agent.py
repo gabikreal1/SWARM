@@ -39,61 +39,62 @@ class ButlerLLMAgent(ToolCallAgent):
     description: str = "Butler AI agent for Archive Protocol - user-facing assistant"
     
     system_prompt: str = """
-    You are the Butler AI for Archive Protocol, a helpful assistant that helps users:
+    You are the Butler AI for Archive Protocol.
     
-    1. **Answer Questions** using RAG (rag_search):
-       - Restaurant recommendations
-       - Service information
-       - General knowledge queries
-       - Use the knowledge base first before asking for more details
+    ### MANDATORY WORKFLOW
+    For EVERY user request, you must follow this sequence:
     
-    2. **Post Jobs** to the decentralized marketplace:
-       - TikTok scraping (username, count)
-       - Web scraping (url)
-       - Data analysis (data_source, analysis_type)
-       - Content generation (content_type, topic, length)
-    
-    3. **Job Management Workflow**:
-       a. Use fill_slots to identify missing parameters
-       b. Ask user clarifying questions (max 3 at a time)
-       c. When all slots filled, confirm with user
-       d. Use post_job to post to OrderBook
-       e. Use get_bids to show available agents
-       f. Help user evaluate bids by price/reputation
-       g. Use accept_bid when user confirms
-       h. Use check_job_status to monitor progress
-       i. Use get_delivery to retrieve completed results
-    
-    4. **Natural Conversation**:
-       - Be friendly and helpful
-       - Explain what you're doing
-       - Confirm before posting jobs or accepting bids
-       - Keep user informed of progress
-    
-    IMPORTANT RULES:
-    - ALWAYS confirm with user before posting jobs or accepting bids
-    - Explain costs clearly (bids are in USDC)
-    - If multiple bids, explain trade-offs (price vs delivery time vs reputation)
-    - After accepting bid, let user know funds are locked in escrow
-    - Check status proactively for long-running jobs
+    1. **CHECK KNOWLEDGE (RAG)**:
+       - Call `rag_search` to see if you have context or if this is a simple question.
+       - If the tool says "Match found", answer the user and STOP.
+       - If the tool says "No match", PROCEED to Step 2 (Evaluate Intent).
+       
+    2. **EVALUATE INTENT**:
+       - **DECISION POINT**:
+         - If the user clearly wants to perform a task (scrape, analyze, etc.) -> Call `fill_slots`.
+         - If the user's intent is unclear or looks like a question you don't know -> ASK for clarification and STOP.
+       
+       - **IF CALLING `fill_slots`**:
+         - If the tool says "Missing slots", ASK the user the questions provided and STOP.
+         - If the tool says "Ready", SUMMARIZE the job and ASK for confirmation. STOP.
+       
+    3. **POST JOB**:
+       - ONLY after the user explicitly confirms "Yes, post it", call `post_job`.
+       
+    4. **POLL BIDS**:
+       - Immediately after posting, call `get_bids` to show initial status.
+       - Present the bids to the user and STOP.
+       
+    ### STOPPING RULES
+    - If you generate a text response to the user, you MUST STOP.
+    - Do NOT loop. Do NOT call `fill_slots` repeatedly without user input.
     """
     
     next_step_prompt: str = """
-    Based on the conversation:
-    
-    - If user asks question: Try rag_search first
-    - If user wants to do something: Use fill_slots to identify requirements
-    - If slots incomplete: Ask clarifying questions
-    - If slots complete: Summarize and ask for confirmation
-    - If confirmed: Use post_job
-    - After job posted: Wait briefly, then get_bids
-    - With bids: Present options to user
-    - User chooses: Use accept_bid
-    - After accepting: Use check_job_status periodically
-    - Job complete: Use get_delivery
+    Determine the next step based on the workflow:
+    1. Start -> `rag_search`
+    2. RAG found info -> Answer -> STOP
+    3. RAG no info & Job Intent -> `fill_slots`
+    4. RAG no info & Unclear -> Ask Clarification -> STOP
+    5. Slots missing -> Ask User -> STOP
+    6. Slots ready -> Ask Confirmation -> STOP
+    7. Confirmed -> `post_job`
+    8. Posted -> `get_bids` -> STOP
     """
     
-    max_steps: int = 20
+    max_steps: int = 10
+
+    def _should_finish_execution(self, llm_response: Any) -> bool:
+        """
+        Stop execution if the LLM generated a text response for the user.
+        """
+        # If there are tool calls, we must continue to execute them
+        if hasattr(llm_response, "tool_calls") and llm_response.tool_calls:
+            return False
+            
+        # If there is content (text response), we must stop and show it to the user
+        # Even if content is empty string, if no tool calls, we should stop.
+        return True
 
 
 class ButlerAgent:
@@ -122,15 +123,19 @@ class ButlerAgent:
         # Create tool manager
         self.tool_manager = create_butler_tools()
         
-        # Create LLM agent
-        self.llm_agent = ButlerLLMAgent(
-            tool_manager=self.tool_manager,
+        # Create LLM client (ChatBot)
+        self.llm_client = ChatBot(
+            model_name=self.model,
             api_key=self.openai_api_key,
-            model=self.model
+            llm_provider="openai"
         )
         
-        # Create chatbot interface
-        self.chatbot = ChatBot(agent=self.llm_agent)
+        # Create LLM agent
+        # Note: 'avaliable_tools' is the field name in spoon-ai-sdk (typo in library)
+        self.llm_agent = ButlerLLMAgent(
+            avaliable_tools=self.tool_manager,
+            llm=self.llm_client
+        )
         
         # Session state
         self.conversation_history: List[Dict[str, str]] = []
@@ -159,7 +164,8 @@ class ButlerAgent:
         
         # Get response from LLM agent
         try:
-            response = await self.chatbot.chat(message)
+            # Use run() instead of chatbot.chat()
+            response = await self.llm_agent.run(message)
             
             # Add to history
             self.conversation_history.append({

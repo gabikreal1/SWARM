@@ -25,11 +25,6 @@ def load_abi(contract_name: str) -> list:
     if abi_path.exists():
         with open(abi_path, "r") as f:
             data = json.load(f)
-<<<<<<< Updated upstream
-            if isinstance(data, dict) and "abi" in data:
-                return data["abi"]
-            return data
-=======
             # Handle both direct ABI arrays and wrapped {abi: [...]} objects
             if isinstance(data, list):
                 return data
@@ -37,7 +32,6 @@ def load_abi(contract_name: str) -> list:
                 return data['abi']
             else:
                 raise ValueError(f"Unexpected ABI format in {abi_path}")
->>>>>>> Stashed changes
     raise FileNotFoundError(f"ABI not found: {abi_path}")
 
 
@@ -317,6 +311,23 @@ def is_agent_active(contracts: ContractInstances, address: str) -> bool:
 def get_job(contracts: ContractInstances, job_id: int) -> dict:
     """Get job details"""
     return contracts.order_book.functions.getJob(job_id).call()
+
+
+def get_job_status(contracts: ContractInstances, job_id: int) -> str:
+    """
+    Get job status as a string.
+    Returns one of: OPEN, IN_PROGRESS, DELIVERED, COMPLETED, DISPUTED
+    """
+    job_data = contracts.order_book.functions.getJob(job_id).call()
+    # JobState is first element in the tuple returned by getJob
+    status_map = {
+        0: "OPEN",
+        1: "IN_PROGRESS", 
+        2: "DELIVERED",
+        3: "COMPLETED",
+        4: "DISPUTED"
+    }
+    return status_map.get(job_data[0], "UNKNOWN")
 
 
 def get_bids_for_job(contracts: ContractInstances, job_id: int) -> list:
