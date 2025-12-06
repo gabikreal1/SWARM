@@ -320,11 +320,18 @@ async def plan_booking(request: BookingPlanRequest):
 
         budget_micro = int(request.budget_usdc * 1_000_000) if request.budget_usdc else 0
         deadline = request.deadline_seconds or 0
+        job_tags: list[str] = ["booking"]
+        if slots:
+            for key in ("location", "cuisine", "party_size", "date", "time"):
+                value = slots.get(key)
+                if value:
+                    job_tags.append(str(value))
         job_response = await agent.post_booking_job(
             description=description,
             job_type=JobType.COMPOSITE.value,
             budget=budget_micro,
             deadline=deadline,
+            tags=job_tags,
         )
         plan["job"] = job_response
 

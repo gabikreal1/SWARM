@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Optional, Any, Callable
 from dataclasses import dataclass
 
+import logging
 from web3 import Web3, AsyncWeb3
 from web3.contract import Contract, AsyncContract
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
 from .config import get_network, get_contract_addresses, ContractAddresses
+
+logger = logging.getLogger(__name__)
 
 
 # Load ABIs from contracts directory
@@ -67,12 +70,14 @@ def get_contracts(private_key: Optional[str] = None) -> ContractInstances:
     
     # Create Web3 instance
     w3 = Web3(Web3.HTTPProvider(network.rpc_url))
+    logger.info("Connecting to RPC %s chain_id=%s", network.rpc_url, network.chain_id)
     
     # Set up account if private key provided
     account = None
     if private_key:
         account = Account.from_key(private_key)
         w3.eth.default_account = account.address
+        logger.info("Loaded account %s", account.address)
     
     # Load ABIs
     order_book_abi = load_abi("OrderBook")
@@ -136,6 +141,8 @@ def send_transaction(
     if not contracts.account:
         raise ValueError("No account configured for signing transactions")
     
+    logger.info("Sending tx %s args=%s kwargs=%s", getattr(contract_func, "fn_name", ""), args, kwargs)
+    
     # Build transaction
     tx = contract_func(*args, **kwargs).build_transaction({
         'from': contracts.account.address,
@@ -161,13 +168,18 @@ def wait_for_receipt(contracts: ContractInstances, tx_hash: str, timeout: int = 
 def post_job(
     contracts: ContractInstances,
     description: str,
-    job_type: int,
-    budget: int,
+    metadata_uri: str,
+    tags: list[str],
     deadline: int
 ) -> int:
     """
     Post a new job to the OrderBook.
-    
+
+    Args:
+        description: Human-readable description stored on-chain.
+        metadata_uri: Off-chain metadata location (NeoFS/IPFS).
+        tags: List of searchable tags to persist in JobRegistry.
+        deadline: Optional unix timestamp for completion.
     Returns:
         Job ID
     """
@@ -175,8 +187,8 @@ def post_job(
         contracts,
         contracts.order_book.functions.postJob,
         description,
-        job_type,
-        budget,
+        metadata_uri,
+        tags,
         deadline
     )
     receipt = wait_for_receipt(contracts, tx_hash)
