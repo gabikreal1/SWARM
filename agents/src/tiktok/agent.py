@@ -6,6 +6,8 @@ by requested hashtags.
 """
 
 import os
+import json
+import base64
 import asyncio
 import logging
 from typing import Optional
@@ -13,6 +15,7 @@ from typing import Optional
 from spoon_ai.agents.toolcall import ToolCallAgent
 from spoon_ai.tools import ToolManager
 from spoon_ai.chat import ChatBot
+import httpx
 
 from agents.src.shared.base_agent import BaseArchiveAgent, AgentCapability, ActiveJob
 from agents.src.shared.config import JobType, JOB_TYPE_LABELS
@@ -20,7 +23,8 @@ from agents.src.shared.events import JobPostedEvent
 from agents.src.shared.wallet_tools import create_wallet_tools
 from agents.src.shared.bidding_tools import create_bidding_tools
 from agents.src.tiktok.tool import create_tiktok_tools
-from agents.src.shared.contracts import get_bids_for_job
+from agents.src.shared.contracts import get_bids_for_job, get_job
+from agents.src.shared.neofs import get_neofs_client
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +67,173 @@ class TikTokAgent(BaseArchiveAgent):
     auto_bid_enabled = True
     use_simple_bid = os.getenv("TIKTOK_SIMPLE_BID", "1") == "1"
 
+    def __init__(self):
+        super().__init__()
+        self._job_metadata_cache: dict[int, dict] = {}
+        self._metadata_uri_cache: dict[str, str] = {}
+
     def _matches_job(self, job: JobPostedEvent) -> bool:
-        """Check if the job description looks like a TikTok scrape we can do."""
-        desc = (job.description or "").lower()
-        return "tiktok" in desc or "tt" in desc or "hashtag" in desc or "profile" in desc
+        """Check if the job description or tags look like a TikTok scrape we can do."""
+        tokens = ["tiktok", "tt", "hashtag", "profile"]
+        metadata_record = self._get_job_metadata_record(job.job_id) or {}
+        desc_source = job.description or metadata_record.get("description") or ""
+        desc = desc_source.lower()
+
+        registry_tags = metadata_record.get("tags") or []
+        tag_list = list({*self._get_job_tags(job.job_id), *registry_tags})
+        tags_joined = " ".join(tag_list).lower() if tag_list else ""
+
+        metadata_uri = metadata_record.get("metadata_uri") or ""
+        metadata_text = self._get_metadata_text(metadata_uri)
+
+        searchable_text = " ".join(filter(None, [desc, metadata_text]))
+        matched = any(tok in searchable_text for tok in tokens) or any(tok in tags_joined for tok in tokens)
+        logger.info(
+            "Match check job_id=%s tokens=%s desc_snip=%s tags=%s metadata_uri=%s match=%s",
+            getattr(job, "job_id", None),
+            tokens,
+            desc[:200],
+            tag_list,
+            metadata_uri,
+            matched,
+        )
+        return matched
+
+    def _get_job_tags(self, job_id: int) -> list[str]:
+        """Fetch tags from JobRegistry metadata for a given job id."""
+        record = self._get_job_metadata_record(job_id) or {}
+        tags = record.get("tags") or []
+        return [str(t) for t in tags]
+
+    def _get_job_metadata_record(self, job_id: int) -> dict | None:
+        """Return cached job metadata (description, tags, metadataURI) from JobRegistry."""
+        if job_id in self._job_metadata_cache:
+            return self._job_metadata_cache[job_id]
+
+        if not self._contracts:
+            return None
+        try:
+            stored_job, _ = self._contracts.job_registry.functions.getJob(job_id).call()
+        except Exception as e:
+            logger.debug("Failed to fetch job metadata for job %s: %s", job_id, e)
+            return None
+
+        if not stored_job or not isinstance(stored_job, (list, tuple)) or len(stored_job) == 0:
+            return None
+
+        metadata = stored_job[0] if isinstance(stored_job[0], (list, tuple)) else stored_job
+        record = {
+            "description": metadata[2] if len(metadata) > 2 else "",
+            "metadata_uri": metadata[3] if len(metadata) > 3 else "",
+            "tags": metadata[4] if len(metadata) > 4 else [],
+        }
+        self._job_metadata_cache[job_id] = record
+        return record
+
+    def _fetch_metadata_document(self, metadata_uri: str) -> Optional[dict]:
+        """Retrieve NeoFS metadata JSON referenced by metadata_uri."""
+        if not metadata_uri or not metadata_uri.startswith("neofs://"):
+            return None
+        try:
+            _, path = metadata_uri.split("://", 1)
+            container_id, object_id = path.split("/", 1)
+        except ValueError:
+            return None
+
+        gateway = os.getenv("NEOFS_REST_GATEWAY", "https://rest.fs.neo.org").rstrip("/")
+        url = f"{gateway}/v1/objects/{container_id}/by_id/{object_id}"
+        try:
+            response = httpx.get(url, timeout=10)
+            response.raise_for_status()
+            payload_b64 = response.json().get("payload")
+            if not payload_b64:
+                return None
+            decoded = base64.b64decode(payload_b64)
+            return json.loads(decoded)
+        except Exception as e:
+            logger.debug("Failed to download metadata %s: %s", metadata_uri, e)
+            return None
+
+    def _get_metadata_text(self, metadata_uri: str) -> str:
+        """Return cached flattened metadata JSON for keyword matching."""
+        if not metadata_uri:
+            return ""
+        if metadata_uri in self._metadata_uri_cache:
+            return self._metadata_uri_cache[metadata_uri]
+
+        document = self._fetch_metadata_document(metadata_uri)
+        if not isinstance(document, dict):
+            self._metadata_uri_cache[metadata_uri] = ""
+            return ""
+
+        try:
+            text = json.dumps(document, separators=(",", ":")).lower()
+        except Exception:
+            text = ""
+        self._metadata_uri_cache[metadata_uri] = text
+        return text
+
+    def log_historical_jobs(self, from_block: int = 0, to_block: str | int = "latest"):
+        """Fetch historical JobPosted logs and log match/non-match."""
+        if not self._contracts:
+            logger.warning("No contracts loaded; cannot fetch historical jobs.")
+            return
+        try:
+            logs = (
+                self._contracts.order_book.events.JobPosted()
+                .get_logs(from_block=from_block, to_block=to_block)
+            )
+            if not logs:
+                logger.info("No JobPosted logs found in range %s-%s", from_block, to_block)
+                return
+            for ev in logs:
+                args = ev["args"]
+                job = JobPostedEvent(
+                    job_id=args.get("jobId", args.get("id", 0)),
+                    client=args.get("client", args.get("poster", "")),
+                    job_type=args.get("jobType", 0),
+                    budget=args.get("budget", 0),
+                    deadline=args.get("deadline", 0),
+                    description=args.get("description", ""),
+                    block_number=ev["blockNumber"],
+                    tx_hash=ev["transactionHash"].hex() if ev["transactionHash"] else "",
+                )
+                match = self._matches_job(job)
+                logger.info(
+                    "Historical JobPosted id=%s type=%s budget=%s match=%s desc=%s tx=%s",
+                    job.job_id,
+                    job.job_type,
+                    job.budget,
+                    match,
+                    (job.description or "")[:200],
+                    job.tx_hash,
+                )
+                # Also log current on-chain job state/bids if available
+                try:
+                    state, bids = self._contracts.order_book.functions.getJob(job.job_id).call()
+                    logger.info(
+                        "JobState id=%s poster=%s status=%s accepted_bid=%s has_dispute=%s bids=%s",
+                        job.job_id,
+                        state[0],
+                        state[1],
+                        state[2],
+                        state[4],
+                        len(bids),
+                    )
+                except Exception as e:
+                    logger.debug("Unable to fetch job state for id=%s: %s", job.job_id, e)
+        except Exception as e:
+            logger.error("Failed to fetch historical jobs: %s", e)
+
+    def _log_job_received(self, job: JobPostedEvent):
+        logger.info(
+            "JobPosted received | id=%s type=%s budget=%s deadline=%s desc=%s",
+            job.job_id,
+            job.job_type,
+            job.budget,
+            job.deadline,
+            (job.description or "")[:200],
+        )
 
     def _adjust_bid_for_competition(self, decision, job: JobPostedEvent):
         """Undercut existing bids to stay competitive."""
@@ -83,6 +250,38 @@ class TikTokAgent(BaseArchiveAgent):
         except Exception as e:
             logger.debug(f"Could not adjust bid for competition: {e}")
         return decision
+
+    async def _build_metadata_uri(self, job: JobPostedEvent, decision) -> str:
+        """
+        Upload lightweight bid metadata to NeoFS and return a URI.
+        Falls back to ipfs:// placeholder on failure.
+        """
+        try:
+            neofs = get_neofs_client()
+            payload = {
+                "job_id": job.job_id,
+                "job_type": job.job_type,
+                "description": job.description,
+                "budget": job.budget,
+                "deadline": job.deadline,
+                "proposed_amount": decision.proposed_amount,
+                "estimated_time": decision.estimated_time,
+                "agent": self.agent_name,
+                "agent_type": self.agent_type,
+            }
+            result = await neofs.upload_json(
+                payload,
+                filename=f"bid-{job.job_id}.json",
+                additional_attributes=None,
+                container_id=os.getenv("NEOFS_CONTAINER_ID"),
+            )
+            await neofs.close()
+            uri = f"neofs://{result.container_id}/{result.object_id}"
+            logger.info("Uploaded bid metadata to NeoFS: %s", uri)
+            return uri
+        except Exception as e:
+            logger.warning("NeoFS metadata upload failed, falling back to ipfs:// placeholder: %s", e)
+            return f"ipfs://{self.agent_type}-bid-{job.job_id}"
 
     async def _create_llm_agent(self) -> ToolCallAgent:
         all_tools = []
@@ -118,10 +317,11 @@ class TikTokAgent(BaseArchiveAgent):
 
     async def _evaluate_and_bid(self, job: JobPostedEvent):
         """Evaluate a job, adjust for competition, and place a bid."""
+        self._log_job_received(job)
         logger.info(f"Evaluating job #{job.job_id} for TikTok agent...")
 
         if not self.can_handle_job_type(job.job_type):
-            logger.debug("Skipping job: not our type.")
+            logger.info("Skipping job #%s: not our job type (%s)", job.job_id, job.job_type)
             return
 
         if not self._matches_job(job):
@@ -132,25 +332,41 @@ class TikTokAgent(BaseArchiveAgent):
             logger.warning(f"Skipping job #{job.job_id}: at capacity.")
             return
 
-        prompt = self.get_bidding_prompt(job)
-
-        try:
-            if self.use_simple_bid or not self.llm_agent:
-                decision = self._heuristic_bid_decision(job)
-            else:
-                response = await self.llm_agent.run(prompt)
-                decision = self._parse_bid_decision(response, job)
-        except Exception as e:
-            logger.error(f"Error evaluating job #{job.job_id}: {e}")
-            return
-
-        decision = self._adjust_bid_for_competition(decision, job)
-
-        logger.info(f"Decision: {'BID' if decision.should_bid else 'SKIP'} for job #{job.job_id}")
-        logger.info(f"Reasoning: {decision.reasoning}")
+        # Auto-bid 1 USDC whenever we match a TikTok job
+        logger.info("Match confirmed for job #%s, preparing auto-bid", job.job_id)
+        decision = BidDecision(
+            should_bid=True,
+            proposed_amount=1_000_000,  # 1 USDC
+            estimated_time=3600,  # default 1 hour
+            reasoning="Auto-match TikTok job with fixed 1 USDC bid",
+            confidence=0.9,
+        )
+        logger.info("Auto-bidding 1 USDC for job #%s", job.job_id)
 
         if decision.should_bid and self._contracts:
-            await self._place_bid(job, decision)
+            metadata_uri = await self._build_metadata_uri(job, decision)
+            # place bid with custom metadata URI
+            try:
+                logger.info(
+                    "Attempting bid job_id=%s amount=%s eta=%s metadata=%s",
+                    job.job_id,
+                    decision.proposed_amount,
+                    decision.estimated_time,
+                    metadata_uri,
+                )
+                from agents.src.shared.contracts import place_bid  # local import to avoid cycle
+                bid_id = place_bid(
+                    self._contracts,
+                    job.job_id,
+                    decision.proposed_amount,
+                    decision.estimated_time,
+                    metadata_uri,
+                )
+                logger.info("Bid placed job_id=%s bid_id=%s", job.job_id, bid_id)
+            except Exception as e:
+                logger.error("Failed to place bid on job %s: %s", job.job_id, e)
+        elif decision.should_bid and not self._contracts:
+            logger.error("Contracts not initialized; cannot bid on job #%s", job.job_id)
 
     async def execute_job(self, job: ActiveJob) -> dict:
         logger.info(f"Executing TikTok job #{job.job_id}")

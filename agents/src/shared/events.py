@@ -184,7 +184,8 @@ class EventListener:
             block_number=event['blockNumber'],
             tx_hash=event['transactionHash'].hex() if event['transactionHash'] else ''
         )
-        
+        logger.info("JobPosted evt job_id=%s type=%s budget=%s deadline=%s desc=%s tx=%s",
+                    parsed.job_id, parsed.job_type, parsed.budget, parsed.deadline, parsed.description, parsed.tx_hash)
         for callback in self._callbacks[EventType.JOB_POSTED]:
             try:
                 await callback(parsed)
@@ -203,7 +204,8 @@ class EventListener:
             block_number=event['blockNumber'],
             tx_hash=event['transactionHash'].hex() if event['transactionHash'] else ''
         )
-        
+        logger.info("BidPlaced evt job_id=%s bid_id=%s bidder=%s amount=%s tx=%s",
+                    parsed.job_id, parsed.bid_id, parsed.bidder, parsed.amount, parsed.tx_hash)
         for callback in self._callbacks[EventType.BID_PLACED]:
             try:
                 await callback(parsed)
@@ -221,7 +223,8 @@ class EventListener:
             block_number=event['blockNumber'],
             tx_hash=event['transactionHash'].hex() if event['transactionHash'] else ''
         )
-        
+        logger.info("BidAccepted evt job_id=%s bid_id=%s worker=%s amount=%s tx=%s",
+                    parsed.job_id, parsed.bid_id, parsed.worker, parsed.amount, parsed.tx_hash)
         for callback in self._callbacks[EventType.BID_ACCEPTED]:
             try:
                 await callback(parsed)
@@ -239,7 +242,8 @@ class EventListener:
             block_number=event['blockNumber'],
             tx_hash=event['transactionHash'].hex() if event['transactionHash'] else ''
         )
-        
+        logger.info("DeliverySubmitted evt job_id=%s worker=%s result=%s tx=%s",
+                    parsed.job_id, parsed.worker, parsed.result_uri, parsed.tx_hash)
         for callback in self._callbacks[EventType.DELIVERY_SUBMITTED]:
             try:
                 await callback(parsed)

@@ -7,6 +7,7 @@ Uses the NeoFS REST Gateway API for decentralized storage.
 import os
 import json
 import base64
+import time
 from typing import Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -265,6 +266,38 @@ class NeoFSClient:
     async def close(self):
         """Close the HTTP client"""
         await self.client.aclose()
+
+
+async def upload_job_metadata(
+    metadata: Any,
+    tags: list[str] | None = None,
+    *,
+    filename_prefix: str = "job-metadata",
+) -> str:
+    """
+    Upload job metadata document to NeoFS and return URI.
+
+    Args:
+        metadata: JSON-serializable metadata payload.
+        tags: Optional tags to store alongside the object for discovery.
+        filename_prefix: Prefix for generated filename.
+    """
+    client = get_neofs_client()
+    timestamp = int(time.time())
+    attributes = [
+        ObjectAttribute(key="Type", value="job_metadata"),
+        ObjectAttribute(key="Timestamp", value=datetime.utcnow().isoformat()),
+    ]
+    if tags:
+        attributes.append(ObjectAttribute(key="Tags", value=",".join(tags)))
+
+    result = await client.upload_json(
+        metadata,
+        filename=f"{filename_prefix}-{timestamp}.json",
+        additional_attributes=attributes,
+    )
+    await client.close()
+    return f"neofs://{result.container_id}/{result.object_id}"
 
 
 def get_neofs_client() -> NeoFSClient:

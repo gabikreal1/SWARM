@@ -1,13 +1,41 @@
 "use client";
 
 import React, { useCallback, useState } from 'react';
+
+const SplitText: React.FC<{ text: string; className?: string; interval?: number }> = ({ text, className, interval = 60 }) => {
+  const words = text.split(' ');
+  return (
+    <span className={className} aria-label={text} style={{ whiteSpace: 'nowrap' }}>
+      {words.map((word, idx) => (
+        <span
+          key={`${word}-${idx}`}
+          style={{
+            display: 'inline-block',
+            animation: `fadeInChar 0.4s ease forwards`,
+            animationDelay: `${idx * interval}ms`,
+            opacity: 0,
+            marginRight: idx === words.length - 1 ? 0 : '0.25rem',
+          }}
+        >
+          {word}
+        </span>
+      ))}
+    </span>
+  );
+};
 import { useConversation } from '@elevenlabs/react';
 import { Orb } from '@/components/ui/orb';
+import { ChatTimeline, ChatMessage } from './ChatTimeline';
+import { ShinyText } from './ShinyText';
 
 interface VoiceAgentProps {
   agentId?: string;
   spoonosButlerUrl?: string;
   onSpoonosMessage?: (message: any) => void;
+  sidebarOpen?: boolean;
+  orbVisible?: boolean;
+  ctaVisible?: boolean;
+  chatReady?: boolean;
 }
 
 // Client tools that bridge ElevenLabs to Spoonos Butler
@@ -92,11 +120,17 @@ const createSpoonosTools = (spoonosButlerUrl: string, onMessage?: (msg: any) => 
 export const VoiceAgent: React.FC<VoiceAgentProps> = ({ 
   agentId,
   spoonosButlerUrl = 'http://localhost:3001/api/spoonos',
-  onSpoonosMessage
+  onSpoonosMessage,
+  sidebarOpen = false,
+  orbVisible = true,
+  ctaVisible = true,
+  chatReady = true,
 }) => {
   const [isStarting, setIsStarting] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [volume, setVolume] = useState(1.0);
+  const [hasStarted, setHasStarted] = useState(false);
   
   // Get API key from environment
   const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
@@ -125,9 +159,28 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
     
     onMessage: (message) => {
       console.log('💬 Message:', message);
-      if (message.message) {
-        setLastMessage(message.message);
-      }
+      const text = typeof message.message === 'string' ? message.message : '';
+      if (!text) return;
+
+      const incomingRoleRaw = (message.role || message.source || 'assistant').toString().toLowerCase();
+      const normalizedRole: ChatMessage['role'] =
+        incomingRoleRaw === 'user'
+          ? 'user'
+          : incomingRoleRaw === 'assistant' || incomingRoleRaw === 'system'
+            ? (incomingRoleRaw as ChatMessage['role'])
+            : 'assistant';
+      const isTranscribed = normalizedRole === 'user';
+
+      setLastMessage(text);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${prev.length}`,
+          role: normalizedRole,
+          text,
+          isTranscribed,
+        },
+      ]);
     },
     
     onModeChange: ({ mode }) => {
@@ -184,6 +237,8 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
         conversation.setVolume({ volume });
         console.log('🔊 Volume set to:', volume);
       }, 100);
+
+      setHasStarted(true);
     } catch (error) {
       console.error('Failed to start conversation:', error);
       alert('Failed to start conversation. Please check microphone permissions and agent ID.');
@@ -210,11 +265,33 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
   }, [conversation.isSpeaking]);
 
   return (
-    <div className="flex flex-col items-center justify-center w-full h-full gap-6">
-      {/* Official ElevenLabs UI Orb */}
-      <div className="w-40 h-40">
-        <Orb
-          className="h-full w-full"
+  <div className="flex flex-col w-full h-full min-h-0 pt-2">
+    {/* Chat segment: fills between header and sphere, scrollable */}
+    <div className="chat-area flex-1 min-h-0 overflow-y-auto px-10 pt-6 pb-4 mb-56 max-w-4xl w-full mx-auto">
+    {hasStarted && chatReady && (
+      <ChatTimeline messages={messages} />
+    )}
+    </div>
+
+    {/* Official ElevenLabs UI Orb with mic control, docked near bottom */}
+      <div className={`voice-agent-orb-container ${sidebarOpen ? 'orb-shifted' : ''} ${orbVisible ? 'orb-enter-active' : 'orb-enter'}`}>
+        {!hasStarted && ctaVisible && (
+          <button
+            type="button"
+            onClick={canStart ? startConversation : undefined}
+            className="orb-prompt orb-cta-fade"
+            disabled={!canStart}
+          >
+            <SplitText
+              text="Press here to start your conversation"
+              className="orb-prompt-text"
+              interval={12}
+            />
+          </button>
+        )}
+        <div className="relative h-28 w-28 flex items-center justify-center">
+          <Orb
+            className="h-full w-full"
           volumeMode="manual"
           getInputVolume={getInputVolume}
           getOutputVolume={getOutputVolume}
@@ -227,90 +304,35 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
           }
           colors={["#22d3ee", "#0ea5e9"]}
         />
+
+          <button
+            type="button"
+            onClick={conversation.status === 'connected' ? stopConversation : startConversation}
+            disabled={conversation.status === 'connected' ? !canStop : !canStart}
+            className={`mic-button absolute inset-0 m-auto ${
+              conversation.status === 'connected'
+                ? 'mic-button-active'
+                : ''
+            } ${
+              (!canStart && conversation.status !== 'connected') || (!canStop && conversation.status === 'connected')
+                ? 'opacity-50 cursor-not-allowed'
+                : ''
+            }`}
+          >
+            <span className="mic-icon" />
+          </button>
+        </div>
+
+        {/* Status label directly under the sphere */}
+        <div className="mt-2 text-xs text-gray-300 text-center w-full">
+          {conversation.status === 'connected' && (
+            conversation.isSpeaking ? 'Speaking...' : 'Listening...'
+          )}
+        </div>
       </div>
 
-      {/* Last Message Display */}
-      {lastMessage && (
-        <div className="max-w-md w-full px-6 py-3 bg-gray-800/50 rounded-lg border border-cyan-500/30">
-          <p className="text-xs text-gray-500 mb-1">Spoonos Butler:</p>
-          <p className="text-sm text-gray-300">{lastMessage}</p>
-        </div>
-      )}
-
-      {/* Controls */}
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex gap-3">
-          <button
-            onClick={startConversation}
-            disabled={!canStart}
-            className={`
-              px-8 py-3 rounded-full font-semibold text-white
-              transition-all duration-300 transform
-              ${canStart 
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 hover:scale-105 shadow-lg hover:shadow-xl' 
-                : 'bg-gray-400 cursor-not-allowed opacity-50'
-              }
-            `}
-          >
-            {isStarting ? '🔄 Starting...' : '🎙️ Talk to Butler'}
-          </button>
-
-          <button
-            onClick={stopConversation}
-            disabled={!canStop}
-            className={`
-              px-8 py-3 rounded-full font-semibold text-white
-              transition-all duration-300 transform
-              ${canStop 
-                ? 'bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 hover:scale-105 shadow-lg hover:shadow-xl' 
-                : 'bg-gray-400 cursor-not-allowed opacity-50'
-              }
-            `}
-          >
-            ⏹️ End Call
-          </button>
-        </div>
-
-        {/* Volume Control */}
-        {conversation.status === 'connected' && (
-          <div className="flex items-center gap-3 text-sm text-gray-400">
-            <span>🔊 Volume:</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={volume}
-              onChange={(e) => {
-                const newVolume = parseFloat(e.target.value);
-                setVolume(newVolume);
-                conversation.setVolume({ volume: newVolume });
-              }}
-              className="w-32"
-            />
-            <span>{Math.round(volume * 100)}%</span>
-          </div>
-        )}
-
-        {/* Status */}
-        <div className="text-sm text-gray-400 flex items-center gap-2">
-          <div className={`
-            w-2 h-2 rounded-full transition-colors
-            ${conversation.status === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}
-          `} />
-          <span className="capitalize">
-            {conversation.status === 'connected' 
-              ? (conversation.isSpeaking ? '🎤 Butler Speaking' : '👂 Listening...') 
-              : 'Ready'
-            }
-          </span>
-        </div>
-
-        {/* Instructions */}
-        <div className="text-xs text-gray-500 text-center max-w-md">
-          ElevenLabs handles voice ↔️ Spoonos Butler handles logic
-        </div>
-
+      {/* Controls (warnings etc.) */}
+      <div className="flex flex-col items-center gap-2 mt-2">
         {!agentId && (
           <div className="text-xs text-yellow-500 bg-yellow-500/10 px-4 py-2 rounded-lg">
             ⚠️ Set NEXT_PUBLIC_ELEVENLABS_AGENT_ID to enable voice

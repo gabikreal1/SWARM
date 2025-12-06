@@ -30,6 +30,7 @@ from ..shared.booking import analyze_slots
 from ..shared.bevec import BeVecClient, VectorRecord, create_bevec_client
 from ..shared.embedding import embed_text
 from ..shared.contracts import get_contracts, post_job
+from ..shared.neofs import upload_job_metadata
 
 from .tools import get_manager_tools
 
@@ -511,14 +512,47 @@ class ManagerAgent:
         job_type: int = JobType.COMPOSITE.value,
         budget: int = 0,
         deadline: int = 0,
+        tags: list[str] | None = None,
     ) -> dict:
         """Post a booking job to the order book."""
         if not self._contracts:
             return {"success": False, "error": "Contracts not initialized"}
 
+        normalized_tags: list[str] = []
+        for tag in tags or []:
+            if isinstance(tag, str):
+                trimmed = tag.strip()
+                if trimmed:
+                    normalized_tags.append(trimmed)
+
         try:
-            job_id = post_job(self._contracts, description, job_type, budget, deadline)
-            return {"success": True, "job_id": job_id}
+            job_type_label = JOB_TYPE_LABELS.get(JobType(job_type), "Unknown")
+        except ValueError:
+            job_type_label = "Unknown"
+
+        metadata_payload = {
+            "description": description,
+            "job_type": job_type,
+            "job_type_label": job_type_label,
+            "budget_micro": budget,
+            "budget_usdc": budget / 1_000_000 if budget else 0,
+            "deadline": deadline,
+            "tags": normalized_tags,
+        }
+
+        try:
+            metadata_uri = await upload_job_metadata(metadata_payload, normalized_tags)
+        except Exception as e:
+            return {"success": False, "error": f"NeoFS upload failed: {e}"}
+
+        try:
+            job_id = post_job(self._contracts, description, metadata_uri, normalized_tags, deadline)
+            return {
+                "success": True,
+                "job_id": job_id,
+                "metadata_uri": metadata_uri,
+                "tags": normalized_tags,
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 

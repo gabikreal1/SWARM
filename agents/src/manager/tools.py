@@ -24,7 +24,7 @@ from ..shared.contracts import get_contracts, post_job
 from ..shared.booking import analyze_slots
 from ..shared.bevec import BeVecClient, VectorRecord
 from ..shared.embedding import embed_text
-from ..shared.neofs import get_neofs_client
+from ..shared.neofs import get_neofs_client, upload_job_metadata
 
 
 # ==============================================================================
@@ -356,6 +356,11 @@ class PostJobTool(BaseTool):
             "budget": {"type": "integer", "description": "Budget in micro USDC", "default": 0},
             "budget_usdc": {"type": "number", "description": "Budget in USDC (will be converted)", "default": 0},
             "deadline": {"type": "integer", "description": "Deadline in seconds", "default": 0},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional tags for discovery & routing",
+            },
         },
         "required": ["description"],
     }
@@ -371,6 +376,7 @@ class PostJobTool(BaseTool):
         budget: int = 0,
         budget_usdc: float = 0,
         deadline: int = 0,
+        tags: list[str] | None = None,
     ) -> str:
         if not self._wallet:
             return json.dumps({"success": False, "error": "Wallet not configured"})
@@ -381,8 +387,34 @@ class PostJobTool(BaseTool):
             return json.dumps({"success": False, "error": f"Contract setup failed: {e}"})
 
         resolved_budget = budget or int(budget_usdc * 1_000_000)
+        normalized_tags: list[str] = []
+        for t in tags or []:
+            if isinstance(t, str):
+                trimmed = t.strip()
+                if trimmed:
+                    normalized_tags.append(trimmed)
         try:
-            job_id = post_job(contracts, description, job_type, resolved_budget, deadline)
+            job_type_label = JOB_TYPE_LABELS.get(JobType(job_type), "Unknown")
+        except ValueError:
+            job_type_label = "Unknown"
+
+        metadata_payload = {
+            "description": description,
+            "job_type": job_type,
+            "job_type_label": job_type_label,
+            "budget_micro": resolved_budget,
+            "budget_usdc": resolved_budget / 1_000_000 if resolved_budget else 0,
+            "deadline": deadline,
+            "tags": normalized_tags,
+        }
+
+        try:
+            metadata_uri = await upload_job_metadata(metadata_payload, normalized_tags)
+        except Exception as e:
+            return json.dumps({"success": False, "error": f"NeoFS upload failed: {e}"})
+
+        try:
+            job_id = post_job(contracts, description, metadata_uri, normalized_tags, deadline)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
 
@@ -392,6 +424,8 @@ class PostJobTool(BaseTool):
             "job_type": job_type,
             "budget": resolved_budget,
             "deadline": deadline,
+            "metadata_uri": metadata_uri,
+            "tags": normalized_tags,
         }, indent=2)
 
 class GetBidsForJobTool(BaseTool):
