@@ -6,6 +6,7 @@ import { WalletPanel } from "@/components/wallet-panel";
 import { OnchainPanel } from "@/components/onchain-panel";
 import { EarningsPie } from "@/components/earnings-pie";
 import { PayoutBalance } from "@/components/payout-balance";
+import { fetchOrderBookEvents } from "@/lib/onchain-history";
 import { getUserFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -53,6 +54,27 @@ export default async function DashboardPage() {
       amount: base + mock,
     };
   });
+
+  const onchainEvents = await fetchOrderBookEvents();
+  const onchainOrders = onchainEvents.map((evt, idx) => ({
+    id: `on-${idx}-${evt.id}`,
+    txHash: evt.txHash || "unknown",
+    amountEth: evt.amount,
+    network: evt.network,
+    walletAddress: evt.wallet,
+    createdAt: evt.createdAt,
+    agent: { id: 0, title: evt.title },
+    buyer: { email: evt.type },
+    source: "on-chain" as const,
+  }));
+
+  const combinedOrders = [...orders.map((o) => ({
+    ...o,
+    source: "db" as const,
+    createdAt: o.createdAt.toISOString(),
+  })), ...onchainOrders].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12">
@@ -123,12 +145,7 @@ export default async function DashboardPage() {
             </p>
           </div>
         </div>
-        <TransactionList
-          orders={orders.map((o) => ({
-            ...o,
-            createdAt: o.createdAt.toISOString(),
-          }))}
-        />
+        <TransactionList orders={combinedOrders} />
       </section>
     </main>
   );

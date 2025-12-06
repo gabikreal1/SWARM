@@ -1,5 +1,5 @@
 type Order = {
-  id: number;
+  id: number | string;
   txHash: string;
   amountEth: number;
   network: string;
@@ -7,6 +7,7 @@ type Order = {
   createdAt: string;
   agent: { id: number; title: string };
   buyer?: { email: string | null } | null;
+  source?: "db" | "on-chain";
 };
 
 type Props = {
@@ -31,13 +32,18 @@ export function TransactionList({ orders }: Props) {
               {order.agent.title}
             </div>
             <div className="text-sm text-[var(--foreground)]">
-              {order.amountEth} ETH
+              {order.amountEth} GAS
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
             <span>{new Date(order.createdAt).toLocaleString()}</span>
             <span>Network: {order.network}</span>
             <span>Buyer: {order.buyer?.email || "wallet"}</span>
+            {order.source && (
+              <span className="pill bg-[var(--pill)] text-[var(--foreground)]">
+                {order.source}
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)] break-all">
             <span>From: {order.walletAddress}</span>
