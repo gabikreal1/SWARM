@@ -274,8 +274,8 @@ class EventListener:
             if self._callbacks[EventType.JOB_POSTED]:
                 try:
                     events = self._order_book.events.JobPosted.get_logs(
-                        fromBlock=from_block,
-                        toBlock=to_block
+                        from_block=from_block,
+                        to_block=to_block
                     )
                     for event in events:
                         await self._process_job_posted(event)
@@ -286,8 +286,8 @@ class EventListener:
             if self._callbacks[EventType.BID_PLACED]:
                 try:
                     events = self._order_book.events.BidPlaced.get_logs(
-                        fromBlock=from_block,
-                        toBlock=to_block
+                        from_block=from_block,
+                        to_block=to_block
                     )
                     for event in events:
                         await self._process_bid_placed(event)
@@ -298,8 +298,8 @@ class EventListener:
             if self._callbacks[EventType.BID_ACCEPTED]:
                 try:
                     events = self._order_book.events.BidAccepted.get_logs(
-                        fromBlock=from_block,
-                        toBlock=to_block
+                        from_block=from_block,
+                        to_block=to_block
                     )
                     for event in events:
                         await self._process_bid_accepted(event)
@@ -310,8 +310,8 @@ class EventListener:
             if self._callbacks[EventType.DELIVERY_SUBMITTED]:
                 try:
                     events = self._order_book.events.DeliverySubmitted.get_logs(
-                        fromBlock=from_block,
-                        toBlock=to_block
+                        from_block=from_block,
+                        to_block=to_block
                     )
                     for event in events:
                         await self._process_delivery_submitted(event)
@@ -337,6 +337,55 @@ class EventListener:
         """Stop the event listener"""
         logger.info("Stopping event listener...")
         self._running = False
+
+    async def catch_up(self, blocks_back: int = 20):
+        """Process recent events immediately (e.g., jobs posted before agent startup)."""
+        if not self._w3 or not self._order_book:
+            self._setup_contracts()
+        try:
+            current_block = self._w3.eth.block_number
+            safe_block = current_block - self.confirmations
+            if safe_block <= 0:
+                return
+            from_block = max(0, safe_block - blocks_back)
+            to_block = safe_block
+            logger.info("Catching up events from block %s to %s", from_block, to_block)
+
+            if self._callbacks[EventType.JOB_POSTED]:
+                events = self._order_book.events.JobPosted.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                )
+                for event in events:
+                    await self._process_job_posted(event)
+
+            if self._callbacks[EventType.BID_PLACED]:
+                events = self._order_book.events.BidPlaced.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                )
+                for event in events:
+                    await self._process_bid_placed(event)
+
+            if self._callbacks[EventType.BID_ACCEPTED]:
+                events = self._order_book.events.BidAccepted.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                )
+                for event in events:
+                    await self._process_bid_accepted(event)
+
+            if self._callbacks[EventType.DELIVERY_SUBMITTED]:
+                events = self._order_book.events.DeliverySubmitted.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                )
+                for event in events:
+                    await self._process_delivery_submitted(event)
+
+            self._last_block = to_block
+        except Exception as e:
+            logger.error("Catch-up failed: %s", e)
     
     async def run_once(self):
         """Poll events once (for testing)"""

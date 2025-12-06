@@ -28,19 +28,12 @@ def load_abi(contract_name: str) -> list:
     if abi_path.exists():
         with open(abi_path, "r") as f:
             data = json.load(f)
-<<<<<<< Updated upstream
-            if isinstance(data, dict) and "abi" in data:
-                return data["abi"]
-            return data
-=======
             # Handle both direct ABI arrays and wrapped {abi: [...]} objects
             if isinstance(data, list):
                 return data
-            elif isinstance(data, dict) and 'abi' in data:
-                return data['abi']
-            else:
-                raise ValueError(f"Unexpected ABI format in {abi_path}")
->>>>>>> Stashed changes
+            if isinstance(data, dict) and "abi" in data:
+                return data["abi"]
+            raise ValueError(f"Unexpected ABI format in {abi_path}")
     raise FileNotFoundError(f"ABI not found: {abi_path}")
 
 

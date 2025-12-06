@@ -17,7 +17,7 @@ from spoon_ai.tools import ToolManager
 from spoon_ai.chat import ChatBot
 import httpx
 
-from agents.src.shared.base_agent import BaseArchiveAgent, AgentCapability, ActiveJob
+from agents.src.shared.base_agent import BaseArchiveAgent, AgentCapability, ActiveJob, BidDecision
 from agents.src.shared.config import JobType, JOB_TYPE_LABELS
 from agents.src.shared.events import JobPostedEvent
 from agents.src.shared.wallet_tools import create_wallet_tools
