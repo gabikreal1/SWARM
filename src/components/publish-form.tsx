@@ -16,9 +16,10 @@ type Props = {
     tags?: string | null;
     network?: string | null;
   };
+  onSaved?: () => void;
 };
 
-export function PublishForm({ mode = "create", agentId, initial }: Props) {
+export function PublishForm({ mode = "create", agentId, initial, onSaved }: Props) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [category, setCategory] = useState(initial?.category ?? "Automation");
@@ -35,6 +36,12 @@ export function PublishForm({ mode = "create", agentId, initial }: Props) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    const idForEdit = mode === "edit" ? Number(agentId) : null;
+    if (mode === "edit" && (!idForEdit || Number.isNaN(idForEdit))) {
+      setError("Missing or invalid agent id");
+      setLoading(false);
+      return;
+    }
     const payload = {
       title,
       description,
@@ -42,18 +49,21 @@ export function PublishForm({ mode = "create", agentId, initial }: Props) {
       priceUsd: Number(priceUsd),
       tags,
       network,
+      id: idForEdit ?? undefined,
     };
     const res =
-      mode === "edit" && agentId
-        ? await fetch(`/api/agents/${agentId}`, {
+      mode === "edit" && idForEdit
+        ? await fetch(`/api/agents/${encodeURIComponent(String(idForEdit))}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
+            cache: "no-store",
           })
         : await fetch("/api/agents", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
+            cache: "no-store",
           });
     const data = await res.json();
     setLoading(false);
@@ -67,7 +77,11 @@ export function PublishForm({ mode = "create", agentId, initial }: Props) {
       setError(err);
       return;
     }
-    router.push("/dashboard");
+    if (onSaved) {
+      onSaved();
+    } else {
+      router.push("/dashboard");
+    }
   };
 
   return (
