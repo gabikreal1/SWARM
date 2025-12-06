@@ -57,10 +57,18 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-white/85 backdrop-blur-lg">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-center gap-2 font-semibold">
-          <span className="pill">SpoonOS x Neo</span>
-          <span className="text-lg text-[var(--accent-strong)]">Agent Hub</span>
-        </Link>
+        <div className="flex items-center gap-4 text-[var(--muted)]">
+          <Link href="/" className="flex items-center gap-2 font-semibold">
+            <span className="pill">SpoonOS x Neo</span>
+            <span className="text-lg text-[var(--accent-strong)]">Agent Hub</span>
+          </Link>
+          <Link
+            href="/public"
+            className="text-sm font-medium hover:text-[var(--foreground)]"
+          >
+            Public board
+          </Link>
+        </div>
         <nav className="flex items-center gap-4 text-sm font-medium text-[var(--muted)]">
           <Link href="/dashboard" className="hover:text-[var(--foreground)]">
             Dashboard

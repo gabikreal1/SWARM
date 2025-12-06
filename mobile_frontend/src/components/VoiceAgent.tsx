@@ -135,6 +135,16 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
   // Get API key from environment
   const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
   
+  const formatError = (err: any) => {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  };
+
   const conversation = useConversation({
     clientTools: createSpoonosTools(spoonosButlerUrl, onSpoonosMessage),
     
@@ -152,8 +162,9 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
     },
     
     onError: (message) => {
+      const text = formatError(message);
       console.error('❌ Error:', message);
-      alert(`Error: ${message}`);
+      alert(`Error: ${text}`);
       setIsStarting(false);
     },
     

@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { AgentCard } from "@/components/agent-card";
 import { TransactionList } from "@/components/transaction-list";
 import { WalletPanel } from "@/components/wallet-panel";
-import { OnchainPanel } from "@/components/onchain-panel";
 import { EarningsPie } from "@/components/earnings-pie";
 import { PayoutBalance } from "@/components/payout-balance";
 import { fetchOrderBookEvents } from "@/lib/onchain-history";
@@ -38,7 +37,8 @@ export default async function DashboardPage() {
 
   const mockEarnings: Record<string, number> = {
     "test agent": 100,
-    "test 2 agent": 300,
+    "test 2 agent": 100,
+    "test 2": 100,
     // Fallback for the displayed "Test" card to show the requested mock value.
     test: 300,
   };
@@ -60,6 +60,7 @@ export default async function DashboardPage() {
     id: `on-${idx}-${evt.id}`,
     txHash: evt.txHash || "unknown",
     amountEth: evt.amount,
+    currency: evt.currency,
     network: evt.network,
     walletAddress: evt.wallet,
     createdAt: evt.createdAt,
@@ -116,7 +117,7 @@ export default async function DashboardPage() {
                 <div className="text-lg font-semibold text-[var(--foreground)]">
                   {earningsData
                     .find((entry) => entry.id === agent.id)
-                    ?.amount.toFixed(4)}{" "}
+                    ?.amount.toFixed(2)}{" "}
                   GAS
                 </div>
               </div>
@@ -131,8 +132,6 @@ export default async function DashboardPage() {
           value: entry.amount,
         }))}
       />
-
-      <OnchainPanel />
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">

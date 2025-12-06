@@ -10,15 +10,12 @@ from pathlib import Path
 from typing import Optional, Any, Callable
 from dataclasses import dataclass
 
-import logging
 from web3 import Web3, AsyncWeb3
 from web3.contract import Contract, AsyncContract
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
 from .config import get_network, get_contract_addresses, ContractAddresses
-
-logger = logging.getLogger(__name__)
 
 
 # Load ABIs from contracts directory
@@ -31,10 +28,9 @@ def load_abi(contract_name: str) -> list:
             # Handle both direct ABI arrays and wrapped {abi: [...]} objects
             if isinstance(data, list):
                 return data
-            elif isinstance(data, dict) and 'abi' in data:
-                return data['abi']
-            else:
-                raise ValueError(f"Unexpected ABI format in {abi_path}")
+            if isinstance(data, dict) and "abi" in data:
+                return data["abi"]
+            raise ValueError(f"Unexpected ABI format in {abi_path}")
     raise FileNotFoundError(f"ABI not found: {abi_path}")
 
 
@@ -74,14 +70,12 @@ def get_contracts(private_key: Optional[str] = None) -> ContractInstances:
     
     # Create Web3 instance
     w3 = Web3(Web3.HTTPProvider(network.rpc_url))
-    logger.info("Connecting to RPC %s chain_id=%s", network.rpc_url, network.chain_id)
     
     # Set up account if private key provided
     account = None
     if private_key:
         account = Account.from_key(private_key)
         w3.eth.default_account = account.address
-        logger.info("Loaded account %s", account.address)
     
     # Load ABIs
     order_book_abi = load_abi("OrderBook")
@@ -145,8 +139,6 @@ def send_transaction(
     if not contracts.account:
         raise ValueError("No account configured for signing transactions")
     
-    logger.info("Sending tx %s args=%s kwargs=%s", getattr(contract_func, "fn_name", ""), args, kwargs)
-    
     # Build transaction
     tx = contract_func(*args, **kwargs).build_transaction({
         'from': contracts.account.address,
@@ -194,12 +186,7 @@ def post_job(
 ) -> int:
     """
     Post a new job to the OrderBook.
-
-    Args:
-        description: Human-readable description stored on-chain.
-        metadata_uri: Off-chain metadata location (NeoFS/IPFS).
-        tags: List of searchable tags to persist in JobRegistry.
-        deadline: Optional unix timestamp for completion.
+    
     Returns:
         Job ID
     """
@@ -323,23 +310,6 @@ def is_agent_active(contracts: ContractInstances, address: str) -> bool:
 def get_job(contracts: ContractInstances, job_id: int) -> dict:
     """Get job details"""
     return contracts.order_book.functions.getJob(job_id).call()
-
-
-def get_job_status(contracts: ContractInstances, job_id: int) -> str:
-    """
-    Get job status as a string.
-    Returns one of: OPEN, IN_PROGRESS, DELIVERED, COMPLETED, DISPUTED
-    """
-    job_data = contracts.order_book.functions.getJob(job_id).call()
-    # JobState is first element in the tuple returned by getJob
-    status_map = {
-        0: "OPEN",
-        1: "IN_PROGRESS", 
-        2: "DELIVERED",
-        3: "COMPLETED",
-        4: "DISPUTED"
-    }
-    return status_map.get(job_data[0], "UNKNOWN")
 
 
 def get_bids_for_job(contracts: ContractInstances, job_id: int) -> list:

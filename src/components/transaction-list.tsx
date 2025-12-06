@@ -2,6 +2,7 @@ type Order = {
   id: number | string;
   txHash: string;
   amountEth: number;
+  currency?: string;
   network: string;
   walletAddress: string;
   createdAt: string;
@@ -32,7 +33,7 @@ export function TransactionList({ orders }: Props) {
               {order.agent.title}
             </div>
             <div className="text-sm text-[var(--foreground)]">
-              {order.amountEth} GAS
+              {order.amountEth} {order.currency || "GAS"}
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
