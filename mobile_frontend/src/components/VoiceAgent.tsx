@@ -135,6 +135,16 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
   // Get API key from environment
   const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
   
+  const formatError = (err: any) => {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  };
+
   const conversation = useConversation({
     clientTools: createSpoonosTools(spoonosButlerUrl, onSpoonosMessage),
     
@@ -152,8 +162,9 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
     },
     
     onError: (message) => {
+      const text = formatError(message);
       console.error('❌ Error:', message);
-      alert(`Error: ${message}`);
+      alert(`Error: ${text}`);
       setIsStarting(false);
     },
     
@@ -267,7 +278,7 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
   return (
   <div className="flex flex-col w-full h-full min-h-0 pt-2">
     {/* Chat segment: fills between header and sphere, scrollable */}
-    <div className="chat-area flex-1 min-h-0 overflow-y-auto px-10 pt-6 pb-4 mb-56 max-w-4xl w-full mx-auto">
+    <div className="chat-area flex-1 min-h-0 overflow-y-auto px-10 pt-6 pb-12 mb-80 max-w-4xl w-full mx-auto">
     {hasStarted && chatReady && (
       <ChatTimeline messages={messages} />
     )}

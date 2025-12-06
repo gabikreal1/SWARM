@@ -40,10 +40,10 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-screen px-3 sm:px-4 pt-4 sm:pt-5">
     <header className="app-header flex-none">
         <button
-          className="icon-button"
+          className="icon-button header-icon"
           aria-label="Open menu"
           type="button"
           onClick={() => setIsSidebarOpen(true)}
@@ -51,7 +51,9 @@ export default function HomePage() {
           ☰
         </button>
         <div className="app-header-spacer" />
-          <WalletConnectButton />
+          <div className="flex items-center gap-3 sm:gap-4">
+            <WalletConnectButton />
+          </div>
       </header>
       <section className="sphere-section flex-1 flex flex-col overflow-hidden">
         <div className="flex flex-col flex-1 overflow-hidden">

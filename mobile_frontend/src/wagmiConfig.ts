@@ -1,14 +1,27 @@
 import { http, createConfig } from 'wagmi';
 import { injected, metaMask, coinbaseWallet, walletConnect } from 'wagmi/connectors';
-import { mainnet } from 'wagmi/chains';
 
-// TODO: replace with real NeoX chain definition
-// const neox = { ... } as const;
+const neoxTestnet = {
+  id: 12227332,
+  name: 'NeoX Testnet T4',
+  nativeCurrency: { name: 'GAS', symbol: 'GAS', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: [process.env.NEXT_PUBLIC_NEOX_RPC_URL || 'https://testnet.rpc.banelabs.org'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'NeoX Testnet Explorer',
+      url: 'https://xt4scan.ngd.network',
+    },
+  },
+} as const;
 
 export const wagmiConfig = createConfig({
-  chains: [mainnet],
+  chains: [neoxTestnet],
   transports: {
-    [mainnet.id]: http(),
+    [neoxTestnet.id]: http(neoxTestnet.rpcUrls.default.http[0]),
   },
   connectors: [
     injected({ shimDisconnect: true }),

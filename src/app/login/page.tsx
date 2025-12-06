@@ -19,7 +19,7 @@ export default async function LoginPage() {
           wallet connect on agent checkout when you are ready to pay.
         </p>
       </div>
-      <div className="w-full">
+      <div className="w-full flex justify-center">
         <AuthForm />
       </div>
     </main>

@@ -28,6 +28,7 @@ export type OnchainEvent = {
   type: OrderBookEvent["type"];
   title: string;
   amount: number;
+  currency?: string;
   wallet: string;
   txHash: string;
   network: string;
@@ -131,6 +132,7 @@ export async function fetchOrderBookEvents() {
           type: "JobPosted",
           title: `Job #${jobId.toString()} posted`,
           amount: 0,
+          currency: "GAS",
           wallet: poster,
           ...base,
         });
@@ -145,7 +147,9 @@ export async function fetchOrderBookEvents() {
           id: `${log.transactionHash}-bid-${bidId}`,
           type: "BidPlaced",
           title: `Bid #${bidId.toString()} on job #${jobId.toString()}`,
-          amount: Number(formatUnits(price, 18)),
+          // OrderBook price is USDC (6 decimals)
+          amount: Number(formatUnits(price, 6)),
+          currency: "USDC",
           wallet: bidder,
           ...base,
         });
@@ -161,6 +165,7 @@ export async function fetchOrderBookEvents() {
           type: "BidAccepted",
           title: `Bid #${bidId.toString()} accepted for job #${jobId.toString()}`,
           amount: 0,
+          currency: "GAS",
           wallet: poster || agent,
           ...base,
         });
