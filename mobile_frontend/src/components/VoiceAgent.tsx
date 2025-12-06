@@ -278,7 +278,7 @@ export const VoiceAgent: React.FC<VoiceAgentProps> = ({
   return (
   <div className="flex flex-col w-full h-full min-h-0 pt-2">
     {/* Chat segment: fills between header and sphere, scrollable */}
-    <div className="chat-area flex-1 min-h-0 overflow-y-auto px-10 pt-6 pb-4 mb-56 max-w-4xl w-full mx-auto">
+    <div className="chat-area flex-1 min-h-0 overflow-y-auto px-10 pt-6 pb-12 mb-80 max-w-4xl w-full mx-auto">
     {hasStarted && chatReady && (
       <ChatTimeline messages={messages} />
     )}
