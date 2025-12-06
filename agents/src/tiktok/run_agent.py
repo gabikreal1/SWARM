@@ -32,14 +32,15 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     agent = await create_tiktok_agent()
+    await agent.start()
     status = agent.get_status()
-    logging.info(f"TikTok agent ready: {status}")
+    logging.info(f"🚀 TikTok agent is running: {status}")
     try:
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        agent.stop()
-        logging.info("TikTok agent stopped")
+      await agent.stop()
+      logging.info("TikTok agent stopped")
 
 
 if __name__ == "__main__":
