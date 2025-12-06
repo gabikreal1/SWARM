@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PublishForm } from "@/components/publish-form";
 import type { Agent } from "@/components/agent-card";
@@ -12,6 +12,7 @@ type Props = {
 
 export function EditAgentModal({ agent, onClose }: Props) {
   const router = useRouter();
+  const [backdropPulse, setBackdropPulse] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -27,13 +28,21 @@ export function EditAgentModal({ agent, onClose }: Props) {
     onClose();
   };
 
+  const handleBackdropClick = () => {
+    setBackdropPulse(true);
+    setTimeout(() => {
+      setBackdropPulse(false);
+      onClose();
+    }, 120);
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center px-4 modal-overlay ${backdropPulse ? "modal-overlay-pulse" : ""}`}
+      onClick={handleBackdropClick}
     >
       <div
-        className="relative w-full max-w-3xl"
+        className="relative w-full max-w-3xl modal-card"
         onClick={(e) => e.stopPropagation()}
       >
         <button

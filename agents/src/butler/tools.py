@@ -75,13 +75,16 @@ class RAGSearchTool(BaseTool):
                 "query": query,
                 "qdrant_results": [],
                 "mem0_results": [],
-                "answer": "Based on knowledge base, relevant information found."
             }
             
             # Try Qdrant
             try:
-                # This would use proper embedding search in production
-                results["qdrant_results"] = ["Qdrant search placeholder"]
+                # Placeholder: In production, this would be real search results.
+                # For now, return empty to simulate "no match" unless query contains "test"
+                if "test" in query.lower():
+                    results["qdrant_results"] = ["This is a test result from Qdrant."]
+                else:
+                    results["qdrant_results"] = []
             except Exception as e:
                 results["qdrant_error"] = str(e)
             
@@ -92,6 +95,13 @@ class RAGSearchTool(BaseTool):
                     results["mem0_results"] = [m.get("memory") for m in mem_results if "memory" in m]
             except Exception as e:
                 results["mem0_error"] = str(e)
+            
+            if results["qdrant_results"] or results["mem0_results"]:
+                results["status"] = "match"
+                results["instruction"] = "Use the information above to answer the user's question. Do NOT call any more tools. STOP."
+            else:
+                results["status"] = "no_match"
+                results["instruction"] = "No relevant info found in knowledge base. DECIDE: If user wants a job -> `fill_slots`. If unclear -> Ask user to clarify. STOP."
             
             return json.dumps(results, indent=2)
             
@@ -123,7 +133,10 @@ class SlotFillingTool(BaseTool):
             },
             "candidate_tools": {
                 "type": "array",
-                "description": "Available tools/job types"
+                "description": "Available tools/job types",
+                "items": {
+                    "type": "object"
+                }
             }
         },
         "required": ["user_message"]
@@ -155,13 +168,20 @@ class SlotFillingTool(BaseTool):
                     candidate_tools=candidate_tools
                 )
                 
-                return json.dumps({
+                result = {
                     "tool": chosen_tool,
                     "current_slots": current_slots,
                     "missing_slots": missing_slots,
                     "questions": questions,
                     "ready": len(missing_slots) == 0
-                }, indent=2)
+                }
+                
+                if not result["ready"]:
+                    result["instruction"] = "CRITICAL: You MUST ask the user the questions in the 'questions' list. Do NOT call this tool again until the user responds. OUTPUT THE QUESTIONS NOW."
+                else:
+                    result["instruction"] = "Slots are complete. Summarize the job details to the user and ask for confirmation to post."
+                
+                return json.dumps(result, indent=2)
                 
             except Exception as e:
                 # Fallback to basic extraction
@@ -279,7 +299,8 @@ class PostJobTool(BaseTool):
                 "job_id": job_id,
                 "metadata_uri": metadata_uri,
                 "tags": tags,
-                "deadline": deadline
+                "deadline": deadline,
+                "instruction": "Job posted successfully. Now call `get_bids` with the job_id to check for initial offers."
             }, indent=2)
             
         except Exception as e:
@@ -333,7 +354,8 @@ class GetBidsTool(BaseTool):
                 "job_id": job_id,
                 "total_bids": len(formatted_bids),
                 "bids": formatted_bids,
-                "best_bid": formatted_bids[0] if formatted_bids else None
+                "best_bid": formatted_bids[0] if formatted_bids else None,
+                "instruction": "Present these bids to the user. Ask which one they want to accept (or if they want to wait). STOP."
             }, indent=2)
             
         except Exception as e:
@@ -493,17 +515,17 @@ class GetDeliveryTool(BaseTool):
 
 def create_butler_tools() -> ToolManager:
     """Create and register all Butler tools"""
-    tm = ToolManager()
+    tools = [
+        # RAG and slot filling
+        RAGSearchTool(),
+        SlotFillingTool(),
+        
+        # Job posting and management
+        PostJobTool(),
+        GetBidsTool(),
+        AcceptBidTool(),
+        CheckJobStatusTool(),
+        GetDeliveryTool(),
+    ]
     
-    # RAG and slot filling
-    tm.register_tool(RAGSearchTool())
-    tm.register_tool(SlotFillingTool())
-    
-    # Job posting and management
-    tm.register_tool(PostJobTool())
-    tm.register_tool(GetBidsTool())
-    tm.register_tool(AcceptBidTool())
-    tm.register_tool(CheckJobStatusTool())
-    tm.register_tool(GetDeliveryTool())
-    
-    return tm
+    return ToolManager(tools=tools)

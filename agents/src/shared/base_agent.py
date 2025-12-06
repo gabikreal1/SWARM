@@ -29,6 +29,7 @@ from .config import JobType, JOB_TYPE_LABELS, get_contract_addresses
 from .wallet import AgentWallet, create_wallet_from_env
 from .events import EventListener, JobPostedEvent, BidAcceptedEvent
 from .contracts import get_contracts, place_bid, get_job
+from .elevenlabs import ElevenLabsClient
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,9 @@ class BaseArchiveAgent(ABC):
         )
         self.active_jobs[event.job_id] = active_job
         
+        # Fire-and-forget: send metadata to ElevenLabs
+        asyncio.create_task(self._send_to_elevenlabs(event, job_details))
+
         # Start executing the job
         asyncio.create_task(self._execute_job_task(active_job))
     
@@ -373,3 +377,78 @@ class BaseArchiveAgent(ABC):
             "auto_bid_enabled": self.auto_bid_enabled,
             "running": self._running,
         }
+
+    async def _send_to_elevenlabs(self, event: BidAcceptedEvent, job_details: Any):
+        """
+        Build a JSON payload with job/bid details and send to ElevenLabs.
+        Uses mock defaults for user data as requested.
+        """
+        client = ElevenLabsClient()
+        if not client.is_configured():
+            logger.warning("ELEVENLABS not configured; skipping call")
+            return
+
+        try:
+            job_state = None
+            bids = []
+            if job_details:
+                try:
+                    job_state = job_details[0]
+                    bids = job_details[1] if len(job_details) > 1 else []
+                except Exception:
+                    pass
+
+            accepted_bid = None
+            for b in bids:
+                # Bid tuple: id, jobId, bidder, price, deliveryTime, reputation, metadataURI, responseURI, accepted, createdAt
+                if int(b[0]) == int(event.bid_id):
+                    accepted_bid = b
+                    break
+
+            price_usdc = 0.0
+            eta_seconds = 0
+            bidder = event.worker
+            bid_metadata = ""
+            if accepted_bid:
+                price_usdc = int(accepted_bid[3]) / 1_000_000  # USDC 6 decimals
+                eta_seconds = int(accepted_bid[4])
+                bidder = accepted_bid[2]
+                bid_metadata = accepted_bid[6] or ""
+
+            job_metadata_uri = ""
+            job_tags = []
+            job_description = ""
+            if job_state:
+                # OrderBook job state does not store description; keep blank unless we fetch elsewhere
+                job_metadata_uri = ""  # Not available from OrderBook; placeholder
+                # status, deliveryProof etc. are present but not used here
+
+            # Mock / provided dynamic vars
+            payload = {
+                "jobId": event.job_id,
+                "acceptedBidId": event.bid_id,
+                "poster": job_state[0] if job_state else "",
+                "bidder": bidder,
+                "priceUsdc": price_usdc,
+                "etaSeconds": eta_seconds,
+                "jobDescription": job_description,
+                "jobTags": job_tags,
+                "jobMetadataUri": job_metadata_uri,
+                "bidMetadataUri": bid_metadata,
+                "txHash": event.tx_hash,
+                # Dynamic vars requested
+                "time": "8pm",
+                "num_of_people": 4,
+                "date": "tomorrow",
+                "user_name": "katya",
+                "user": bidder,
+                # Optional phone / voice
+                "phoneNumber": client.phone_number,
+                "voiceId": client.voice_id,
+            }
+
+            logger.info(f"📞 Sending job #{event.job_id} bid #{event.bid_id} to ElevenLabs...")
+            resp = await client.send_call(payload)
+            logger.info(f"✅ ElevenLabs response: {resp}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send to ElevenLabs: {e}")

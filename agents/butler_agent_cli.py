@@ -81,6 +81,8 @@ class ButlerCLI:
             print("✅ Butler Agent ready!")
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"❌ Failed to initialize Butler: {e}")
             return False
         

@@ -17,7 +17,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from spoon_ai.memory.mem0_client import SpoonMem0
+# Optional memory support
+try:
+    from spoon_ai.memory.mem0_client import SpoonMem0
+except ImportError:
+    SpoonMem0 = None
 
 logger = logging.getLogger(__name__)
 
@@ -103,33 +107,37 @@ class TemplateMemory:
         global_collection: str = "global_templates",
     ) -> None:
         self.user_id = user_id
-        self.user_mem = SpoonMem0(
-            {
-                "user_id": user_id,
-                "collection": per_user_collection,
-                "filters": {"user_id": user_id} if user_id else {},
-            }
-        )
-        self.global_mem = SpoonMem0(
-            {
-                "collection": global_collection,
-                "metadata": {"privacy": "anonymized"},
-                # Mem0 requires at least one filter; use an agent_id marker plus anonymized user_id.
-                "user_id": "anon_global",
-                "filters": {"agent_id": "global_templates", "user_id": "anon_global"},
-            }
-        )
+        if SpoonMem0 is not None:
+            self.user_mem = SpoonMem0(
+                {
+                    "user_id": user_id,
+                    "collection": per_user_collection,
+                    "filters": {"user_id": user_id} if user_id else {},
+                }
+            )
+            self.global_mem = SpoonMem0(
+                {
+                    "collection": global_collection,
+                    "metadata": {"privacy": "anonymized"},
+                    # Mem0 requires at least one filter; use an agent_id marker plus anonymized user_id.
+                    "user_id": "anon_global",
+                    "filters": {"agent_id": "global_templates", "user_id": "anon_global"},
+                }
+            )
+        else:
+            self.user_mem = None
+            self.global_mem = None
 
     def search(self, query: str, min_hits: int = 2) -> List[TemplateRecord]:
         """Search per-user first, then global anonymized fallback."""
         hits: List[TemplateRecord] = []
 
         # Per-user
-        if self.user_mem.is_ready():
+        if self.user_mem and self.user_mem.is_ready():
             hits = self._parse_results(self.user_mem.search_memory(query))
 
         # Global fallback if not enough
-        if len(hits) < min_hits and self.global_mem.is_ready():
+        if len(hits) < min_hits and self.global_mem and self.global_mem.is_ready():
             global_hits = self._parse_results(self.global_mem.search_memory(query))
             # Tag privacy on global hits
             for h in global_hits:
@@ -140,13 +148,13 @@ class TemplateMemory:
 
     def store(self, record: TemplateRecord) -> None:
         """Store per-user (if available) and anonymized global copy."""
-        if self.user_mem.is_ready():
+        if self.user_mem and self.user_mem.is_ready():
             try:
                 self.user_mem.add_text(record.to_text(), user_id=self.user_id)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Per-user template store failed: %s", exc)
 
-        if self.global_mem.is_ready():
+        if self.global_mem and self.global_mem.is_ready():
             global_copy = TemplateRecord(
                 task_summary=record.task_summary,
                 final_slots=record.final_slots,

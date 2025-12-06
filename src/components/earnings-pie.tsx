@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 type PieDatum = {
   label: string;
@@ -46,6 +46,13 @@ export function EarningsPie({ data }: { data: PieDatum[] }) {
     };
   }, [data]);
 
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const activeSlice = useMemo(() => {
+    if (!slices.length) return null;
+    if (activeLabel) return slices.find((s) => s.label === activeLabel) || slices[0];
+    return slices[0];
+  }, [activeLabel, slices]);
+
   return (
     <section className="card flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -63,29 +70,60 @@ export function EarningsPie({ data }: { data: PieDatum[] }) {
       {total <= 0 ? (
         <div className="text-sm text-[var(--muted)]">No earnings yet.</div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-[220px,1fr] md:items-center">
-          <div
-            className="mx-auto h-48 w-48 rounded-full border border-[var(--border)]"
-            style={{ background: gradient }}
-          />
-          <div className="grid gap-2">
-            {slices.map((slice) => (
-              <div
-                key={slice.label}
-                className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-white px-3 py-2"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="h-3 w-3 rounded-full"
-                    style={{ backgroundColor: slice.color }}
-                  />
-                  <span className="text-sm text-[var(--foreground)]">{slice.label}</span>
+        <div className="grid gap-4 md:grid-cols-[240px,1fr] md:items-start">
+          <div className="relative mx-auto h-52 w-52 rounded-full border border-[var(--border)]" style={{ background: gradient }}>
+            {activeSlice && (
+              <div className="absolute inset-6 rounded-full bg-white/85 backdrop-blur flex flex-col items-center justify-center text-center px-3">
+                <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Agent</div>
+                <div className="mt-1 text-sm font-semibold text-[var(--foreground)]">{activeSlice.label}</div>
+                <div className="text-lg font-bold text-[var(--foreground)]">
+                  {activeSlice.pct.toFixed(1)}%
                 </div>
-                <div className="text-sm font-semibold text-[var(--foreground)]">
-                  {slice.value.toFixed(2)} GAS · {slice.pct.toFixed(1)}%
+                <div className="text-xs text-[var(--muted)]">
+                  {activeSlice.value.toFixed(2)} GAS
                 </div>
               </div>
-            ))}
+            )}
+          </div>
+          <div className="grid gap-3">
+            {activeSlice && (
+              <div className="rounded-xl border border-[var(--border)] bg-white px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: activeSlice.color }} />
+                  <div className="text-sm font-semibold text-[var(--foreground)]">{activeSlice.label}</div>
+                </div>
+                <div className="mt-1 text-sm text-[var(--muted)]">
+                  Share: {activeSlice.pct.toFixed(1)}% · {activeSlice.value.toFixed(2)} GAS
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Hover rows below to inspect an agent’s contribution.
+                </div>
+              </div>
+            )}
+            <div className="grid gap-2">
+              {slices.map((slice) => (
+                <div
+                  key={slice.label}
+                  className={`flex items-center justify-between rounded-lg border border-[var(--border)] bg-white px-3 py-2 transition hover:shadow-md hover:-translate-y-[1px] ${
+                    activeSlice?.label === slice.label ? "ring-2 ring-[var(--accent)] ring-offset-1 ring-offset-white" : ""
+                  }`}
+                  onMouseEnter={() => setActiveLabel(slice.label)}
+                  onFocus={() => setActiveLabel(slice.label)}
+                  tabIndex={0}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: slice.color }}
+                    />
+                    <span className="text-sm text-[var(--foreground)]">{slice.label}</span>
+                  </div>
+                  <div className="text-sm font-semibold text-[var(--foreground)]">
+                    {slice.value.toFixed(2)} GAS · {slice.pct.toFixed(1)}%
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
