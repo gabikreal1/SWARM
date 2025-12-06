@@ -1,0 +1,14 @@
+{
+  "network": "neox-testnet",
+  "chainId": 12227332,
+  "deployedAt": "2025-12-06T11:56:27.550Z",
+  "deployer": "0x915B0E49BBB7FfCAD47A3B6744d9eCE079272389",
+  "usdc": "0x9f1Af8576f52507354eaF2Dc438a5333Baf2D09D",
+  "contracts": {
+    "JobRegistry": "0xd6aac3B6D997Be956f0d437732fea2e9a6927189",
+    "ReputationToken": "0x540eBF386dd98EB575B63D1eaC243Db80c455066",
+    "Escrow": "0x6C658B4077DD29303ec1bDafb43Db571d4F310c8",
+    "OrderBook": "0xF86e4A9608aF5A08c037925FEe3C65BCDa12e465",
+    "AgentRegistry": "0xbf76cEc97DDE6EC8b62e89e37C8B020a632ec4Df"
+  }
+}
