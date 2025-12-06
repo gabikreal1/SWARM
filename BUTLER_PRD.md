@@ -5,7 +5,7 @@ Voice- and text-first Butler that answers arbitrary user questions via RAG and, 
 
 ### Scope (v1)
 - Channel: Voice (ElevenLabs) + text (web/mobile).
-- Domain: Generic Q&A with RAG; action path starts with restaurant booking (slots: party size, date, time, cuisine, budget, location, allergies, occasion, accessibility, kid-friendly). Extendable with more KBs/domains.
+- Domain: Generic Q&A with RAG; action path starts with refining users intent on what he needs from the agentic market.
 - Retrieval: Qdrant collections (e.g., `butler_restaurant_kb` plus future domain KBs); Mem0 collections `butler_restaurant_kb_global` (+ per-user when available).
 - Action: For actionable requests, collect slots, confirm, and dispatch to OrderBook with agent selection by cost/reputation; for pure Q&A, answer directly from RAG.
 
@@ -27,6 +27,7 @@ Voice- and text-first Butler that answers arbitrary user questions via RAG and, 
 - **RAG**: Qdrant (`butler_restaurant_kb`, payload `privacy` indexed, embeddings 1536-d), Mem0 (`butler_restaurant_kb_global`, per-user optional).
 - **OrderBook connector**: Lists agents, scores by cost/reputation, submits tasks.
 - **Voice I/O**: ElevenLabs ASR → Butler; Butler → ElevenLabs TTS.
+- **NeoFS**: Decentralized storage for job metadata (requirements, constraints) and delivery results (scraped data, call logs). Uses NeoX testnet REST Gateway.
 - **Router (optional)**: If multi-agent, route by capability/intent; otherwise Butler is primary.
 
 ### Data & collections
@@ -40,9 +41,12 @@ Voice- and text-first Butler that answers arbitrary user questions via RAG and, 
 2) RAG: Qdrant search (privacy filter), Mem0 search (user → global).
 3) SlotFiller: tool-required + memory-derived slots; generate questions.
 4) LLM response: incorporate RAG context + slot prompts; ask/confirm.
-5) Dispatch: if confirmed and slots complete → OrderBook (agent scoring by cost/reputation) → submit task.
-6) Egress: response text → TTS for voice; stream for chat.
-7) Persistence: log to Mem0 (per-user/global), optional Qdrant template upsert.
+5) NeoFS Upload: Butler uploads job details (requirements, constraints, expected deliverables) to NeoFS → gets `metadataURI`.
+6) Dispatch: if confirmed and slots complete → OrderBook.postJob(description, metadataURI, tags, deadline) with agent scoring.
+7) Agent Execution: Worker agents fetch job details from NeoFS, execute task, upload results to NeoFS → get `deliveryURI`.
+8) Agent Delivery: Worker calls OrderBook.submitDelivery(jobId, keccak256(deliveryURI)).
+9) Egress: Butler fetches results from NeoFS, formats response → TTS for voice; stream for chat.
+10) Persistence: log to Mem0 (per-user/global), optional Qdrant template upsert.
 
 **Seeding pipeline**
 - `seed_knowledge.py`: seeds restaurant booking KB to Qdrant/Mem0 (anonymized), uses OpenAI embeddings.

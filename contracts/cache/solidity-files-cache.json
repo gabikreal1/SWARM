@@ -190,6 +190,44 @@
         "IERC20"
       ]
     },
+    "C:\\Users\\growg\\OneDrive\\Desktop\\ARCHive\\SWARM\\contracts\\node_modules\\@openzeppelin\\contracts\\interfaces\\draft-IERC6093.sol": {
+      "lastModificationDate": 1765021607693,
+      "contentHash": "5041977bbe908de2e6ed0270447f79ad",
+      "sourceName": "@openzeppelin/contracts/interfaces/draft-IERC6093.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        ">=0.8.4"
+      ],
+      "artifacts": [
+        "IERC1155Errors",
+        "IERC20Errors",
+        "IERC721Errors"
+      ]
+    },
     "C:\\Users\\growg\\OneDrive\\Desktop\\ARCHive\\SWARM\\contracts\\node_modules\\@openzeppelin\\contracts\\token\\ERC20\\extensions\\IERC20Metadata.sol": {
       "lastModificationDate": 1765021608957,
       "contentHash": "513778b30d2750f5d2b9b19bbcf748a5",
@@ -221,59 +259,11 @@
       "imports": [
         "../IERC20.sol"
       ],
-      "imports": [
-        "../IERC20.sol"
-      ],
       "versionPragmas": [
-        ">=0.6.2"
         ">=0.6.2"
       ],
       "artifacts": [
         "IERC20Metadata"
-        "IERC20Metadata"
-      ]
-    },
-    "C:\\Users\\growg\\OneDrive\\Desktop\\ARCHive\\SWARM\\contracts\\node_modules\\@openzeppelin\\contracts\\interfaces\\draft-IERC6093.sol": {
-      "lastModificationDate": 1765021607693,
-      "contentHash": "5041977bbe908de2e6ed0270447f79ad",
-      "sourceName": "@openzeppelin/contracts/interfaces/draft-IERC6093.sol",
-      "solcConfig": {
-        "version": "0.8.24",
-        "settings": {
-          "optimizer": {
-            "enabled": true,
-            "runs": 200
-          },
-          "evmVersion": "paris",
-          "outputSelection": {
-            "*": {
-              "*": [
-                "abi",
-                "evm.bytecode",
-                "evm.deployedBytecode",
-                "evm.methodIdentifiers",
-                "metadata"
-              ],
-              "": [
-                "ast"
-              ]
-            }
-          }
-        }
-      },
-      "imports": [],
-      "imports": [],
-      "versionPragmas": [
-        ">=0.8.4"
-        ">=0.8.4"
-      ],
-      "artifacts": [
-        "IERC1155Errors",
-        "IERC20Errors",
-        "IERC721Errors"
-        "IERC1155Errors",
-        "IERC20Errors",
-        "IERC721Errors"
       ]
     },
     "C:\\Users\\growg\\OneDrive\\Desktop\\ARCHive\\SWARM\\contracts\\contracts\\Escrow.sol": {

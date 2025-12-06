@@ -25,9 +25,19 @@ def load_abi(contract_name: str) -> list:
     if abi_path.exists():
         with open(abi_path, "r") as f:
             data = json.load(f)
+<<<<<<< Updated upstream
             if isinstance(data, dict) and "abi" in data:
                 return data["abi"]
             return data
+=======
+            # Handle both direct ABI arrays and wrapped {abi: [...]} objects
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict) and 'abi' in data:
+                return data['abi']
+            else:
+                raise ValueError(f"Unexpected ABI format in {abi_path}")
+>>>>>>> Stashed changes
     raise FileNotFoundError(f"ABI not found: {abi_path}")
 
 
@@ -158,11 +168,27 @@ def wait_for_receipt(contracts: ContractInstances, tx_hash: str, timeout: int = 
 
 # High-level contract operations
 
+def approve_usdc(
+    contracts: ContractInstances,
+    spender: str,
+    amount: int
+) -> str:
+    """Approve spender to spend USDC"""
+    tx_hash = send_transaction(
+        contracts,
+        contracts.usdc.functions.approve,
+        Web3.to_checksum_address(spender),
+        amount
+    )
+    wait_for_receipt(contracts, tx_hash)
+    return tx_hash
+
+
 def post_job(
     contracts: ContractInstances,
     description: str,
-    job_type: int,
-    budget: int,
+    metadata_uri: str,
+    tags: list[str],
     deadline: int
 ) -> int:
     """
@@ -175,8 +201,8 @@ def post_job(
         contracts,
         contracts.order_book.functions.postJob,
         description,
-        job_type,
-        budget,
+        metadata_uri,
+        tags,
         deadline
     )
     receipt = wait_for_receipt(contracts, tx_hash)
@@ -295,7 +321,9 @@ def get_job(contracts: ContractInstances, job_id: int) -> dict:
 
 def get_bids_for_job(contracts: ContractInstances, job_id: int) -> list:
     """Get all bids for a job"""
-    return contracts.order_book.functions.getBidsForJob(job_id).call()
+    # OrderBook.getJob returns (JobState, Bid[])
+    result = contracts.order_book.functions.getJob(job_id).call()
+    return result[1]  # Return the bids array
 
 
 def setup_event_listener(
