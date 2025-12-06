@@ -1,0 +1,180 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg: #020617;
+  --bg-card: #020617;
+  --border: #1f2937;
+  --text: #f9fafb;
+  --muted: #6b7280;
+  --accent: #0ea5e9;
+  
+  /* shadcn/ui CSS variables for dark mode */
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 98%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 212.7 26.8% 83.9%;
+  --chart-1: 220 70% 50%;
+  --chart-2: 160 60% 45%;
+  --chart-3: 30 80% 55%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+  --radius: 0.5rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%);
+  color: var(--text);
+}
+
+.app-root {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: 3fr 2fr 1.4fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.sphere-section {
+  min-height: 260px;
+}
+
+.feed-section,
+.wallet-section {
+  min-height: 160px;
+}
+
+.card {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: radial-gradient(circle at top left, #020617, #020617 60%, #020617 100%);
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-header {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.card-body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.job-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.9);
+}
+
+.job-icon {
+  font-size: 1.1rem;
+}
+
+.job-label {
+  font-size: 0.9rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.job-meta {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.wallet-panel {
+  align-self: flex-end;
+}
+
+.wallet-address {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.wallet-network {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.wallet-desc {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+}
+
+.btn-primary {
+  border: none;
+  outline: none;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  color: #0b1120;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+@media (min-width: 768px) {
+  .app-root {
+    grid-template-columns: 2fr 1.4fr;
+    grid-template-rows: 2fr 1fr;
+    grid-template-areas:
+      'sphere feed'
+      'sphere wallet';
+  }
+
+  .sphere-section {
+    grid-area: sphere;
+  }
+
+  .feed-section {
+    grid-area: feed;
+  }
+
+  .wallet-section {
+    grid-area: wallet;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
