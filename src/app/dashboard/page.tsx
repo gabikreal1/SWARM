@@ -4,6 +4,7 @@ import { AgentCard } from "@/components/agent-card";
 import { TransactionList } from "@/components/transaction-list";
 import { WalletPanel } from "@/components/wallet-panel";
 import { OnchainPanel } from "@/components/onchain-panel";
+import { WalletBalance } from "@/components/wallet-balance";
 import { getUserFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -28,7 +29,6 @@ export default async function DashboardPage() {
     include: { agent: { select: { id: true, title: true } }, buyer: { select: { email: true } } },
   });
 
-  const totalEth = orders.reduce((acc, o) => acc + o.amountEth, 0);
   const earningsByAgent = orders.reduce<Record<number, number>>((acc, order) => {
     acc[order.agent.id] = (acc[order.agent.id] || 0) + order.amountEth;
     return acc;
@@ -55,16 +55,13 @@ export default async function DashboardPage() {
         <div className="card">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm text-[var(--muted)]">Total earned (on-chain)</div>
-              <div className="text-3xl font-semibold text-[var(--foreground)]">
-                {totalEth.toFixed(4)} ETH
+              <div className="text-sm text-[var(--muted)]">Wallet balance (Neo X GAS)</div>
+              <div className="text-[var(--foreground)]">
+                <WalletBalance />
               </div>
             </div>
-            <div className="pill">Wallet balance</div>
+            <div className="pill">Connected wallet</div>
           </div>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Earnings sum wallet-connected payments across your agents.
-          </p>
         </div>
         <WalletPanel initialWallet={user.walletAddress} name={user.name || user.email} />
       </section>
@@ -83,7 +80,7 @@ export default async function DashboardPage() {
               <div className="card flex items-center justify-between">
                 <div className="text-sm text-[var(--muted)]">Earned</div>
                 <div className="text-lg font-semibold text-[var(--foreground)]">
-                  {(earningsByAgent[agent.id] || 0).toFixed(4)} ETH
+                  {(earningsByAgent[agent.id] || 0).toFixed(4)} GAS
                 </div>
               </div>
             </div>

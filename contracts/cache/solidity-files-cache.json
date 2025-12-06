@@ -221,10 +221,15 @@
       "imports": [
         "../IERC20.sol"
       ],
+      "imports": [
+        "../IERC20.sol"
+      ],
       "versionPragmas": [
+        ">=0.6.2"
         ">=0.6.2"
       ],
       "artifacts": [
+        "IERC20Metadata"
         "IERC20Metadata"
       ]
     },
@@ -257,10 +262,15 @@
         }
       },
       "imports": [],
+      "imports": [],
       "versionPragmas": [
+        ">=0.8.4"
         ">=0.8.4"
       ],
       "artifacts": [
+        "IERC1155Errors",
+        "IERC20Errors",
+        "IERC721Errors"
         "IERC1155Errors",
         "IERC20Errors",
         "IERC721Errors"
