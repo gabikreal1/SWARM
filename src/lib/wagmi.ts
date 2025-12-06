@@ -6,25 +6,26 @@ import { chainDefaults } from "./contracts";
 const chainId = chainDefaults.chainId;
 const rpcUrl = chainDefaults.rpcUrl;
 const explorer = chainDefaults.blockExplorer;
+const chainName = chainDefaults.chainName || "Neo X Testnet";
 
-export const arcTestnet: Chain = {
+export const neoXTestnet: Chain = {
   id: chainId,
-  name: "Arc Testnet",
+  name: chainName,
   nativeCurrency: { name: "GAS", symbol: "GAS", decimals: 18 },
   rpcUrls: {
     default: { http: [rpcUrl] },
     public: { http: [rpcUrl] },
   },
   blockExplorers: {
-    default: { name: "ArcScan", url: explorer },
+    default: { name: "Explorer", url: explorer },
   },
   testnet: true,
 };
 
 export const wagmiConfig = createConfig({
-  chains: [arcTestnet],
+  chains: [neoXTestnet],
   transports: {
-    [arcTestnet.id]: http(rpcUrl),
+    [neoXTestnet.id]: http(rpcUrl),
   },
   connectors: [injected()],
   ssr: true,
