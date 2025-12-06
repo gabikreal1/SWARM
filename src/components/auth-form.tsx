@@ -23,6 +23,7 @@ export function AuthForm() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, name }),
+      credentials: "include",
     });
 
     if (!res.ok) {
@@ -33,7 +34,8 @@ export function AuthForm() {
     }
 
     setLoading(false);
-    router.push("/");
+    // After auth, go to dashboard; refresh to re-evaluate middleware/session
+    router.push("/dashboard");
     router.refresh();
   };
 

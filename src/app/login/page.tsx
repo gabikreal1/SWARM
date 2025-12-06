@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 export default async function LoginPage() {
   const user = await getUserFromRequest();
   if (user) {
-    redirect("/");
+    redirect("/dashboard");
   }
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-6 px-6 py-12">

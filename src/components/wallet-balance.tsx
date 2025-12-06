@@ -1,16 +1,16 @@
+"use client";
+
 import { useAccount, useBalance } from "wagmi";
 
 /**
- * Simple balance display for the connected wallet (NeoLine on Neo X testnet).
- * Shows native GAS balance using wagmi/viem.
+ * Shows the connected wallet's native GAS balance on Neo X.
  */
 export function WalletBalance() {
   const { address, isConnected, chainId } = useAccount();
-
   const { data, isLoading, error } = useBalance({
     address,
     chainId,
-    watch: true, // auto-update on new blocks
+    watch: true,
   });
 
   if (!isConnected) return <div>Connect your wallet to see balance.</div>;
@@ -19,9 +19,9 @@ export function WalletBalance() {
 
   return (
     <div>
-      <div>Wallet: {address}</div>
-      <div>
-        Balance: {data ? `${data.formatted} ${data.symbol}` : "—"}
+      <div className="text-sm text-[var(--muted)]">Wallet: {address}</div>
+      <div className="text-2xl font-semibold text-[var(--foreground)]">
+        {data ? `${data.formatted} ${data.symbol}` : "—"}
       </div>
     </div>
   );

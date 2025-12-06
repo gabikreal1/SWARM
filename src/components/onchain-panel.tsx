@@ -5,7 +5,6 @@ import { useAccount, useReadContract, useWriteContract } from "wagmi";
 import { agentRegistryAbi } from "@/lib/abi/agentRegistry";
 import { orderBookAbi } from "@/lib/abi/orderBook";
 import { chainDefaults } from "@/lib/contracts";
-import { WalletBalance } from "./wallet-balance";
 
 const STATUS = ["Unregistered", "Active", "Inactive", "Banned"];
 
@@ -32,7 +31,6 @@ export function OnchainPanel() {
 
   const agentAddress = chainDefaults.agentRegistry as `0x${string}`;
   const orderBookAddress = chainDefaults.orderBook as `0x${string}`;
-  const chainName = chainDefaults.chainName || "Neo X Testnet";
 
   const { data: agentData, refetch } = useReadContract({
     address: agentAddress,
@@ -106,19 +104,15 @@ export function OnchainPanel() {
     <div className="card flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="pill mb-2 w-fit">On-chain (Neo X)</div>
+          <div className="pill mb-2 w-fit">On-chain (Arc)</div>
           <div className="text-lg font-semibold text-[var(--foreground)]">
             Agent registry & jobs
           </div>
           <div className="text-sm text-[var(--muted)]">
-            {chainName} · Chain {chainDefaults.chainId} · AgentRegistry {agentAddress.slice(0, 6)}… ·
-            OrderBook {orderBookAddress.slice(0, 6)}…
+            Chain {chainDefaults.chainId} · AgentRegistry {agentAddress.slice(0, 6)}… · OrderBook{" "}
+            {orderBookAddress.slice(0, 6)}…
           </div>
         </div>
-      </div>
-
-      <div className="rounded-lg border border-[var(--border)] bg-white p-3">
-        <WalletBalance />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">

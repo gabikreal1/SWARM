@@ -6,9 +6,6 @@ import { prisma } from "@/lib/prisma";
 
 export default async function Home() {
   const user = await getUserFromRequest();
-  if (!user) {
-    redirect("/login");
-  }
 
   const agents = await prisma.agent.findMany({
     orderBy: { createdAt: "desc" },
@@ -31,8 +28,8 @@ export default async function Home() {
           <Link href="/agents/publish" className="btn-primary">
             Publish an agent
           </Link>
-          <Link href="/dashboard" className="btn-secondary">
-            Go to dashboard
+          <Link href={user ? "/dashboard" : "/login"} className="btn-secondary">
+            {user ? "Go to dashboard" : "Log in"}
           </Link>
         </div>
       </section>

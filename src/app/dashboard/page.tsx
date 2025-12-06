@@ -56,9 +56,7 @@ export default async function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm text-[var(--muted)]">Wallet balance (Neo X GAS)</div>
-              <div className="text-[var(--foreground)]">
-                <WalletBalance />
-              </div>
+              <WalletBalance />
             </div>
             <div className="pill">Connected wallet</div>
           </div>
