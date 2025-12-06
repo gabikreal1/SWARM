@@ -4,7 +4,8 @@ import { AgentCard } from "@/components/agent-card";
 import { TransactionList } from "@/components/transaction-list";
 import { WalletPanel } from "@/components/wallet-panel";
 import { OnchainPanel } from "@/components/onchain-panel";
-import { WalletBalance } from "@/components/wallet-balance";
+import { EarningsPie } from "@/components/earnings-pie";
+import { PayoutBalance } from "@/components/payout-balance";
 import { getUserFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -34,6 +35,25 @@ export default async function DashboardPage() {
     return acc;
   }, {});
 
+  const mockEarnings: Record<string, number> = {
+    "test agent": 100,
+    "test 2 agent": 300,
+    // Fallback for the displayed "Test" card to show the requested mock value.
+    test: 300,
+  };
+  const defaultMockEarning = 300;
+
+  const earningsData = agents.map((agent) => {
+    const normalizedTitle = agent.title.trim().toLowerCase();
+    const mock = mockEarnings[normalizedTitle] ?? defaultMockEarning;
+    const base = earningsByAgent[agent.id] || 0;
+    return {
+      id: agent.id,
+      title: agent.title,
+      amount: base + mock,
+    };
+  });
+
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12">
       <div className="flex flex-col gap-2">
@@ -53,13 +73,7 @@ export default async function DashboardPage() {
 
       <section className="grid gap-4 md:grid-cols-2">
         <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm text-[var(--muted)]">Wallet balance (Neo X GAS)</div>
-              <WalletBalance />
-            </div>
-            <div className="pill">Connected wallet</div>
-          </div>
+          <PayoutBalance address={user.walletAddress} inline />
         </div>
         <WalletPanel initialWallet={user.walletAddress} name={user.name || user.email} />
       </section>
@@ -78,13 +92,23 @@ export default async function DashboardPage() {
               <div className="card flex items-center justify-between">
                 <div className="text-sm text-[var(--muted)]">Earned</div>
                 <div className="text-lg font-semibold text-[var(--foreground)]">
-                  {(earningsByAgent[agent.id] || 0).toFixed(4)} GAS
+                  {earningsData
+                    .find((entry) => entry.id === agent.id)
+                    ?.amount.toFixed(4)}{" "}
+                  GAS
                 </div>
               </div>
             </div>
           ))
         )}
       </section>
+
+      <EarningsPie
+        data={earningsData.map((entry) => ({
+          label: entry.title,
+          value: entry.amount,
+        }))}
+      />
 
       <OnchainPanel />
 

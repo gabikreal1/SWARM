@@ -31,7 +31,12 @@ export async function PATCH(req: Request, { params }: Params) {
   const user = await getUserFromRequest();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const id = Number(params.id);
+  const body = await req.json();
+
+  // Allow id either from the path param or body fallback to avoid NaN issues from the client.
+  const pathId = Number(params.id);
+  const bodyId = body?.id !== undefined ? Number(body.id) : NaN;
+  const id = !Number.isNaN(pathId) ? pathId : bodyId;
   if (Number.isNaN(id)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
@@ -41,7 +46,6 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await req.json();
   const parsed = agentSchema.partial().safeParse({
     ...body,
     priceUsd: body.priceUsd !== undefined ? Number(body.priceUsd) : undefined,

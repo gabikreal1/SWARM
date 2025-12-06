@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { User } from "lucide-react";
 
@@ -9,6 +9,7 @@ type SessionUser = { id: number; email: string; name?: string | null };
 
 export function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -45,7 +46,7 @@ export function Navbar() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
