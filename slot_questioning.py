@@ -243,9 +243,11 @@ class QdrantTemplateStore:
         collection: str = "slot_templates",
         url: Optional[str] = None,
         api_key: Optional[str] = None,
+        upsert_global: bool = True,
     ) -> None:
         self.embedder = embedder
         self.collection = collection
+        self.upsert_global = upsert_global
         self.client = self._init_client(url, api_key)
         if self.client:
             self._ensure_collection()
@@ -281,23 +283,41 @@ class QdrantTemplateStore:
     def upsert(self, record: TemplateRecord, user_id: Optional[str]) -> None:
         if not self.client:
             return
-        payload = {
-            "blob": record.to_text(),
-            "user_id": user_id,
-            "chosen_tool": record.chosen_tool,
-            "privacy": record.privacy or "user" if user_id else "anonymized",
-        }
+        from uuid import uuid4
+
         vector = self.embedder.embed(record.build_query_text())
-        try:
-            self.client.upsert(
-                collection_name=self.collection,
-                points=[
-                    {
-                        "vector": vector,
-                        "payload": payload,
-                    }
-                ],
+
+        points: List[Dict[str, Any]] = []
+        # Per-user copy
+        points.append(
+            {
+                "id": str(uuid4()),
+                "vector": vector,
+                "payload": {
+                    "blob": record.to_text(),
+                    "user_id": user_id,
+                    "chosen_tool": record.chosen_tool,
+                    "privacy": record.privacy or "user",
+                },
+            }
+        )
+        # Optional anonymized/global copy
+        if self.upsert_global:
+            points.append(
+                {
+                    "id": str(uuid4()),
+                    "vector": vector,
+                    "payload": {
+                        "blob": record.to_text(),
+                        "user_id": "anon_global",
+                        "chosen_tool": record.chosen_tool,
+                        "privacy": "anonymized",
+                    },
+                }
             )
+
+        try:
+            self.client.upsert(collection_name=self.collection, points=points)
         except Exception as exc:
             logger.debug("Qdrant upsert failed: %s", exc)
 
@@ -310,14 +330,15 @@ class QdrantTemplateStore:
         except Exception:
             return []
 
-        conditions = []
+        must = []
+        should = []
         if user_id:
-            conditions.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+            should.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+            should.append(FieldCondition(key="privacy", match=MatchValue(value="anonymized")))
         else:
-            # allow global anonymized entries too
-            conditions.append(FieldCondition(key="privacy", match=MatchValue(value="anonymized")))
+            must.append(FieldCondition(key="privacy", match=MatchValue(value="anonymized")))
 
-        query_filter = Filter(must=conditions) if conditions else None
+        query_filter = Filter(must=must or None, should=should or None)
 
         try:
             results = self.client.search(
@@ -505,6 +526,12 @@ def _demo() -> None:
     current_slots = {"destination": "Paris"}  # already known
 
     filler = SlotFiller(user_id="demo_user")
+
+    # Health check
+    print("Backends:")
+    print("- Mem0 ready:", filler.memory.user_mem.is_ready())
+    print("- Qdrant ready:", filler.qdrant_store.is_ready())
+    print("- OpenAI embeddings:", bool(filler.embedder.openai_client))
     missing_slots, questions, chosen_tool = filler.fill(
         user_message=user_message,
         current_slots=current_slots,
