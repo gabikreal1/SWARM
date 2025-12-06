@@ -472,6 +472,96 @@ body {
   padding: 0.4rem 0.9rem;
 }
 
+.send-card-wrapper {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto 0.75rem;
+}
+
+.send-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(2, 6, 23, 0.9), rgba(12, 74, 110, 0.25));
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+.send-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.send-title {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.send-subtitle {
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.send-target {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px dashed rgba(56, 189, 248, 0.35);
+  padding: 0.55rem 0.6rem;
+  border-radius: 10px;
+  word-break: break-all;
+  color: #e5e7eb;
+}
+
+.send-input-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.send-input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.send-input:focus {
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+.send-button {
+  min-width: 104px;
+}
+
+.send-status {
+  min-height: 1.2rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.send-status-error {
+  color: #fca5a5;
+}
+
+.send-link {
+  color: #38bdf8;
+  text-decoration: none;
+}
+
+.send-link:hover {
+  text-decoration: underline;
+}
+
 .icon-exit {
   width: 20px;
   height: 20px;
