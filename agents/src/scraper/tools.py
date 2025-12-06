@@ -31,15 +31,13 @@ class TikTokScrapeTool(BaseTool):
     """
     name: str = "scrape_tiktok"
     description: str = """
-    Scrape TikTok videos and posts using Bright Data's Web Scraper API.
+    Scrape TikTok videos and posts using Bright Data's Dataset API.
     
-    Use this to search for TikTok content and return structured data including:
-    - Video URLs and thumbnails
-    - Captions and hashtags
-    - Engagement metrics (likes, comments, shares)
-    - Creator information
-    
-    This is an async operation - results may take 30-60 seconds.
+    Uses the documented Bright Data dataset scrape endpoint (discover by URL).
+    Defaults to dataset_id gd_lu702nij2f790tmv9h unless overridden via
+    BRIGHT_DATA_DATASET_ID. Provide a search_query and it will crawl the TikTok
+    search page for that query. You can also pass an explicit tiktok_url to
+    scrape a specific video or discover page.
     """
     parameters: dict = {
         "type": "object",
@@ -47,6 +45,10 @@ class TikTokScrapeTool(BaseTool):
             "search_query": {
                 "type": "string",
                 "description": "The search query for TikTok (e.g., 'moscow restaurants trendy')"
+            },
+            "tiktok_url": {
+                "type": "string",
+                "description": "Optional explicit TikTok URL to scrape (video or discover)"
             },
             "max_results": {
                 "type": "integer",
@@ -63,75 +65,64 @@ class TikTokScrapeTool(BaseTool):
     async def execute(
         self, 
         search_query: str, 
+        tiktok_url: str = None,
         max_results: int = 10,
         location: str = None
     ) -> str:
-        """Scrape TikTok using Bright Data API"""
+        """Scrape TikTok using Bright Data dataset scrape endpoint"""
         api_token = os.getenv("BRIGHT_DATA_API_KEY")
-        
+        dataset_id = os.getenv("BRIGHT_DATA_DATASET_ID", "gd_lu702nij2f790tmv9h")
+
         if not api_token:
-            return json.dumps({
-                "success": False,
-                "error": "BRIGHT_DATA_API_KEY not configured"
-            })
-        
+            return json.dumps(
+                {"success": False, "error": "BRIGHT_DATA_API_KEY not configured"}
+            )
+
         max_results = min(max_results, 50)  # Cap at 50
-        
+
         try:
-            # Bright Data Web Scraper API for TikTok
-            api_url = "https://api.brightdata.com/datasets/v3/trigger"
-            
-            # Build the TikTok search URL
-            tiktok_search_url = f"https://www.tiktok.com/search?q={search_query.replace(' ', '+')}"
-            
+            api_url = (
+                "https://api.brightdata.com/datasets/v3/scrape"
+                f"?dataset_id={dataset_id}"
+                "&notify=false&include_errors=true&type=discover_new&discover_by=url"
+            )
+
+            # Build input URLs
+            inputs = []
+            if search_query:
+                tiktok_search_url = f"https://www.tiktok.com/search?q={search_query.replace(' ', '+')}"
+                inputs.append({"URL": tiktok_search_url})
+            if tiktok_url:
+                inputs.append({"URL": tiktok_url})
+
             async with httpx.AsyncClient(timeout=120.0) as client:
-                # Trigger the scrape
                 response = await client.post(
                     api_url,
                     headers={
                         "Authorization": f"Bearer {api_token}",
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
                     },
-                    json={
-                        "dataset_id": "gd_lu702otf1h4ggj6b5h",  # TikTok posts dataset
-                        "input": [{"url": tiktok_search_url}],
-                        "format": "json",
-                        "limit": max_results
-                    }
+                    json={"input": inputs},
                 )
                 response.raise_for_status()
-                trigger_result = response.json()
-                
-                snapshot_id = trigger_result.get("snapshot_id")
-                
-                if not snapshot_id:
-                    return json.dumps({
-                        "success": False,
-                        "error": "Failed to get snapshot ID from Bright Data"
-                    })
-                
-                # Poll for results
-                results = await self._poll_for_results(client, api_token, snapshot_id)
-                
-                return json.dumps({
-                    "success": True,
-                    "query": search_query,
-                    "location": location,
-                    "snapshot_id": snapshot_id,
-                    "results": results,
-                    "count": len(results) if results else 0
-                }, indent=2)
-                
+                data = response.json()
+
+                # data may include result id or records directly; return raw payload
+                return json.dumps(
+                    {
+                        "success": True,
+                        "query": search_query,
+                        "location": location,
+                        "dataset_id": dataset_id,
+                        "result": data,
+                    },
+                    indent=2,
+                )
+
         except httpx.HTTPError as e:
-            return json.dumps({
-                "success": False,
-                "error": f"HTTP error: {str(e)}"
-            })
+            return json.dumps({"success": False, "error": f"HTTP error: {str(e)}"})
         except Exception as e:
-            return json.dumps({
-                "success": False,
-                "error": str(e)
-            })
+            return json.dumps({"success": False, "error": str(e)})
     
     async def _poll_for_results(
         self, 
