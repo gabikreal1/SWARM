@@ -61,44 +61,36 @@ class NeoFSClient:
         attributes: list[ObjectAttribute] | None = None,
         container_id: str | None = None
     ) -> UploadResult:
-        """
-        Upload data to NeoFS.
-        
-        Args:
-            data: Data to upload (bytes or string)
-            attributes: Object attributes
-            container_id: Override default container ID
-            
-        Returns:
-            UploadResult with object ID and container ID
-        """
+        """Upload data to NeoFS via REST POST /v1/objects/{cid}."""
+
         cid = container_id or self.container_id
         if not cid:
             raise ValueError("Container ID is required")
-        
+
         # Convert to base64 if string
         if isinstance(data, str):
             data = data.encode('utf-8')
         payload_b64 = base64.b64encode(data).decode('ascii')
-        
+
         # Build attributes dict
         attrs_dict = {}
         if attributes:
             for attr in attributes:
                 attrs_dict[attr.key] = attr.value
-        
-        response = await self.client.put(
+
+        response = await self.client.post(
             f"{self.gateway_url}/v1/objects/{cid}",
             json={
                 "payload": payload_b64,
-                "attributes": attrs_dict
-            }
+                "attributes": attrs_dict,
+            },
         )
         response.raise_for_status()
-        
+
         result = response.json()
+        object_id = result.get("object_id") or result.get("oid")
         return UploadResult(
-            object_id=result.get("object_id", ""),
+            object_id=object_id or "",
             container_id=cid
         )
     
@@ -122,11 +114,15 @@ class NeoFSClient:
             raise ValueError("Container ID is required")
         
         response = await self.client.get(
-            f"{self.gateway_url}/v1/objects/{cid}/{object_id}"
+            f"{self.gateway_url}/v1/objects/{cid}/by_id/{object_id}"
         )
         response.raise_for_status()
-        
-        return response.content
+
+        result = response.json()
+        payload_b64 = result.get("payload")
+        if payload_b64 is None:
+            raise ValueError("Payload missing in NeoFS response")
+        return base64.b64decode(payload_b64)
     
     async def search_objects(
         self,
