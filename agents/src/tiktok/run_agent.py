@@ -32,8 +32,10 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     agent = await create_tiktok_agent()
+    # Start event listener + auto-bid loop
+    await agent.start()
     status = agent.get_status()
-    logging.info(f"TikTok agent ready: {status}")
+    logging.info(f"TikTok agent running: {status}")
     try:
         while True:
             await asyncio.sleep(1)

@@ -380,19 +380,19 @@ class BaseArchiveAgent(ABC):
 
     async def _send_to_elevenlabs(self, event: BidAcceptedEvent, job_details: Any):
         """
-        Build a JSON payload with job/bid details and send to ElevenLabs.
+        Build a JSON payload with job/bid details and send to ElevenLabs (convai websocket).
         Uses mock defaults for user data as requested.
         """
         client = ElevenLabsClient()
         if not client.is_configured():
             logger.warning("ELEVENLABS not configured; skipping call")
             return
-
         try:
             job_state = None
             bids = []
             if job_details:
                 try:
+                    # OrderBook getJob returns (JobState, Bid[])
                     job_state = job_details[0]
                     bids = job_details[1] if len(job_details) > 1 else []
                 except Exception:
@@ -401,45 +401,46 @@ class BaseArchiveAgent(ABC):
             accepted_bid = None
             for b in bids:
                 # Bid tuple: id, jobId, bidder, price, deliveryTime, reputation, metadataURI, responseURI, accepted, createdAt
-                if int(b[0]) == int(event.bid_id):
-                    accepted_bid = b
-                    break
+                try:
+                    if int(b[0]) == int(event.bid_id):
+                        accepted_bid = b
+                        break
+                except Exception:
+                    continue
 
             price_usdc = 0.0
             eta_seconds = 0
             bidder = event.worker
             bid_metadata = ""
-            if accepted_bid:
-                price_usdc = int(accepted_bid[3]) / 1_000_000  # USDC 6 decimals
-                eta_seconds = int(accepted_bid[4])
-                bidder = accepted_bid[2]
-                bid_metadata = accepted_bid[6] or ""
+            if accepted_bid and len(accepted_bid) >= 7:
+                try:
+                    price_usdc = int(accepted_bid[3]) / 1_000_000  # USDC 6 decimals
+                    eta_seconds = int(accepted_bid[4])
+                    bidder = accepted_bid[2]
+                    bid_metadata = accepted_bid[6] or ""
+                except Exception:
+                    pass
 
-            job_metadata_uri = ""
-            job_tags = []
-            job_description = ""
-            if job_state:
-                # OrderBook job state does not store description; keep blank unless we fetch elsewhere
-                job_metadata_uri = ""  # Not available from OrderBook; placeholder
-                # status, deliveryProof etc. are present but not used here
+            poster = ""
+            if job_state and len(job_state) >= 1:
+                poster = job_state[0]
 
-            # Mock / provided dynamic vars
             payload = {
                 "jobId": event.job_id,
                 "acceptedBidId": event.bid_id,
-                "poster": job_state[0] if job_state else "",
+                "poster": poster,
                 "bidder": bidder,
                 "priceUsdc": price_usdc,
                 "etaSeconds": eta_seconds,
-                "jobDescription": job_description,
-                "jobTags": job_tags,
-                "jobMetadataUri": job_metadata_uri,
+                "jobDescription": "",
+                "jobTags": [],
+                "jobMetadataUri": "",
                 "bidMetadataUri": bid_metadata,
                 "txHash": event.tx_hash,
                 # Dynamic vars requested
                 "time": "8pm",
                 "num_of_people": 4,
-                "date": "tomorrow",
+                "date": "7th December",
                 "user_name": "katya",
                 "user": bidder,
                 # Optional phone / voice
@@ -447,8 +448,8 @@ class BaseArchiveAgent(ABC):
                 "voiceId": client.voice_id,
             }
 
-            logger.info(f"📞 Sending job #{event.job_id} bid #{event.bid_id} to ElevenLabs...")
-            resp = await client.send_call(payload)
-            logger.info(f"✅ ElevenLabs response: {resp}")
+            logger.info(f"📞 Sending job #{event.job_id} bid #{event.bid_id} to ElevenLabs convai...")
+            resp = await client.send_conversation_payload(payload)
+            logger.info(f"✅ ElevenLabs convai response: {resp}")
         except Exception as e:
             logger.error(f"❌ Failed to send to ElevenLabs: {e}")

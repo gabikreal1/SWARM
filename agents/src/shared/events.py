@@ -218,7 +218,7 @@ class EventListener:
         parsed = BidAcceptedEvent(
             job_id=args.get('jobId', 0),
             bid_id=args.get('bidId', 0),
-            worker=args.get('worker', args.get('bidder', '')),
+            worker=args.get('agent', args.get('worker', args.get('bidder', ''))),
             amount=args.get('amount', 0),
             block_number=event['blockNumber'],
             tx_hash=event['transactionHash'].hex() if event['transactionHash'] else ''

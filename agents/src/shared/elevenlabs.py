@@ -3,6 +3,8 @@ import logging
 from typing import Any, Dict, Optional
 
 import httpx
+import websockets
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class ElevenLabsClient:
     Optional:
       - ELEVENLABS_VOICE_ID
       - ELEVENLABS_PHONE
+      - ELEVENLABS_AGENT_ID (for convai signed URL)
     """
 
     def __init__(
@@ -25,11 +28,13 @@ class ElevenLabsClient:
         api_key: Optional[str] = None,
         voice_id: Optional[str] = None,
         phone_number: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         self.api_url = api_url or os.getenv("ELEVENLABS_API_URL")
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         self.voice_id = voice_id or os.getenv("ELEVENLABS_VOICE_ID")
         self.phone_number = phone_number or os.getenv("ELEVENLABS_PHONE")
+        self.agent_id = agent_id or os.getenv("ELEVENLABS_AGENT_ID")
 
     def is_configured(self) -> bool:
         return bool(self.api_url and self.api_key)
@@ -52,4 +57,54 @@ class ElevenLabsClient:
                 return resp.json()
             except Exception:
                 return {"status": "ok", "raw": resp.text}
+
+    async def get_signed_url(self) -> str:
+        """
+        Get a signed convai URL for websocket conversation.
+        Requires ELEVENLABS_AGENT_ID.
+        """
+        if not self.api_key:
+            raise ValueError("ElevenLabs API key missing")
+        if not self.agent_id:
+            raise ValueError("ELEVENLABS_AGENT_ID missing")
+
+        url = "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url"
+        params = {"agent_id": self.agent_id}
+        headers = {"xi-api-key": self.api_key}
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(url, headers=headers, params=params)
+            if resp.status_code >= 300:
+                raise RuntimeError(f"get-signed-url failed: {resp.status_code} {resp.text}")
+            data = resp.json()
+            signed_url = data.get("signed_url")
+            if not signed_url:
+                raise RuntimeError("Signed URL not returned")
+            return signed_url
+
+    async def send_conversation_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Opens the ElevenLabs convai websocket and sends JSON payload once.
+        Returns a minimal status dict; this is a fire-and-forget convenience.
+        """
+        signed_url = await self.get_signed_url()
+        try:
+            async with websockets.connect(signed_url, ping_interval=None) as ws:
+                await ws.send(json_dump(payload))
+                # Read one response frame (optional)
+                try:
+                    reply = await asyncio.wait_for(ws.recv(), timeout=5)
+                except asyncio.TimeoutError:
+                    reply = "no-reply"
+                return {"status": "sent", "signed_url": signed_url, "reply": reply}
+        except Exception as e:
+            raise RuntimeError(f"ElevenLabs websocket send failed: {e}")
+
+
+def json_dump(obj: Dict[str, Any]) -> str:
+    import json
+
+    try:
+        return json.dumps(obj)
+    except Exception:
+        return "{}"
 

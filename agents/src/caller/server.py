@@ -112,6 +112,21 @@ async def get_active_jobs():
     }
 
 
+# ElevenLabs webhook endpoint (post-call/status)
+@app.post("/webhooks/elevenlabs")
+async def elevenlabs_webhook(request: Request):
+    """
+    Receive ElevenLabs ConvAI/Twilio webhook callbacks.
+    For now, we log and return 200. Extend to push into processing pipeline.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"error": "invalid json"}
+    logger.info(f"📨 ElevenLabs webhook payload: {payload}")
+    return {"received": True}
+
+
 # A2A Endpoint
 
 @app.post("/v1/rpc", response_model=A2AResponse)

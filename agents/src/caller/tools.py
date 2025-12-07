@@ -16,6 +16,7 @@ from web3 import Web3
 from spoon_ai.tools.base import BaseTool
 
 from ..shared.neofs import get_neofs_client
+import httpx
 
 
 class MakePhoneCallTool(BaseTool):
@@ -371,5 +372,95 @@ def create_caller_tools() -> list[BaseTool]:
         SendSMSTool(),
         UploadCallResultTool(),
         ComputeProofHashTool(),
+        MakeElevenLabsCallTool(),
     ]
+
+
+class MakeElevenLabsCallTool(BaseTool):
+    """
+    Initiate an outbound call via ElevenLabs ConvAI (Twilio integration).
+    
+    Uses the official ElevenLabs outbound-call API to avoid websocket/DTMF
+    disconnect issues seen with manual Twilio calls.
+    """
+    name: str = "make_elevenlabs_call"
+    description: str = """
+    Place an outbound call using ElevenLabs ConvAI Twilio integration.
+    Requires ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, ELEVENLABS_PHONE_ID (the
+    ElevenLabs phone_number_id) to be set in env. Sends dynamic variables for
+    the first message.
+    """
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "to_number": {
+                "type": "string",
+                "description": "Destination phone in E.164 format, e.g., +447512593720"
+            },
+            "user_name": {"type": "string", "description": "Recipient/user name"},
+            "time": {"type": "string", "description": "Time slot, e.g., 8pm"},
+            "date": {"type": "string", "description": "Date string"},
+            "num_of_people": {"type": "integer", "description": "Number of people"},
+            "user": {"type": "string", "description": "User identifier"},
+        },
+        "required": ["to_number", "user_name"],
+    }
+
+    async def execute(
+        self,
+        to_number: str,
+        user_name: str,
+        time: str = "8pm",
+        date: str = "tomorrow",
+        num_of_people: int = 4,
+        user: str = "demo",
+    ) -> str:
+        api_key = os.getenv("ELEVENLABS_API_KEY")
+        agent_id = os.getenv("ELEVENLABS_AGENT_ID")
+        phone_id = os.getenv("ELEVENLABS_PHONE_ID")
+
+        if not api_key or not agent_id or not phone_id:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "Missing ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID / ELEVENLABS_PHONE_ID",
+                }
+            )
+
+        payload = {
+            "agent_id": agent_id,
+            "agent_phone_number_id": phone_id,
+            "to_number": to_number,
+            "authenticated": True,
+            "conversation_initiation_client_data": {
+                "type": "conversation_initiation_client_data",
+                "dynamic_variables": {
+                    "user_name": user_name,
+                    "time": time,
+                    "num_of_people": num_of_people,
+                    "date": date,
+                    "user": user,
+                },
+            },
+        }
+
+        url = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    url,
+                    headers={
+                        "xi-api-key": api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return json.dumps(
+                    {"success": True, "status_code": resp.status_code, "body": resp.json()},
+                    indent=2,
+                )
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
 
