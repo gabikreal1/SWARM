@@ -65,6 +65,7 @@ class ActiveJob:
     budget: int
     deadline: int
     status: str = "accepted"  # accepted, in_progress, completed, failed
+    metadata_uri: str = ""
 
 
 class BaseArchiveAgent(ABC):
@@ -311,14 +312,9 @@ class BaseArchiveAgent(ABC):
         job_type_val = job_state[2] if job_state and len(job_state) > 2 else 0
         job_description = job_state[1] if job_state and len(job_state) > 1 else ""
         job_deadline = job_state[4] if job_state and len(job_state) > 4 else 0
-        raw_meta_uri = job_state[3] if job_state and len(job_state) > 3 else ""
-        if isinstance(raw_meta_uri, bytes):
-            try:
-                job_metadata_uri = raw_meta_uri.decode("utf-8").strip("\x00")
-            except Exception:
-                job_metadata_uri = ""
-        else:
-            job_metadata_uri = str(raw_meta_uri) if raw_meta_uri else ""
+
+        # Resolve job metadata URI with fallback to JobRegistry when OrderBook value is missing
+        job_metadata_uri = self._resolve_job_metadata_uri(job_state, event.job_id)
 
         # Track the active job
         active_job = ActiveJob(
@@ -328,7 +324,8 @@ class BaseArchiveAgent(ABC):
             description=job_description,
             budget=event.amount,
             deadline=job_deadline,
-            status="accepted"
+            status="accepted",
+            metadata_uri=job_metadata_uri,
         )
         self.active_jobs[event.job_id] = active_job
         
@@ -426,6 +423,44 @@ class BaseArchiveAgent(ABC):
             logger.warning(f"Failed to fetch job metadata from {metadata_uri}: {e}")
         return {}
 
+    def _resolve_job_metadata_uri(self, job_state: Any, job_id: int) -> str:
+        """
+        Resolve job metadata URI.
+        Priority:
+          1) JobRegistry.getJob(job_id) -> metadata.metadataURI
+          2) Fallback to agent-generated NeoFS metadata if tracked locally
+        Note: OrderBook.JobState does NOT contain metadataURI; avoid using it.
+        """
+        def _decode_uri(val: Any) -> str:
+            if isinstance(val, bytes):
+                try:
+                    return val.decode("utf-8").strip("\x00")
+                except Exception:
+                    return ""
+            return str(val) if val else ""
+
+        # Primary: JobRegistry.getJob(job_id)
+        if self._contracts and getattr(self._contracts, "job_registry", None):
+            try:
+                jr_job = self._contracts.job_registry.functions.getJob(job_id).call()
+                stored_job = jr_job[0] if jr_job else None  # (StoredJob)
+                metadata = stored_job[0] if stored_job and len(stored_job) > 0 else None  # (JobMetadata)
+                uri_from_registry = _decode_uri(metadata[3] if metadata and len(metadata) > 3 else "")
+                if uri_from_registry:
+                    logger.info("Resolved job metadata URI from JobRegistry.getJob: %s", uri_from_registry)
+                    return uri_from_registry
+            except Exception as e:
+                logger.warning("Failed to resolve metadata URI from JobRegistry for job %s: %s", job_id, e)
+
+        # Fallback: locally tracked active job metadata
+        active = self.active_jobs.get(job_id)
+        if active and getattr(active, "metadata_uri", None):
+            logger.info("Using active job metadata URI fallback: %s", active.metadata_uri)
+            return active.metadata_uri
+
+        logger.warning("No job metadata URI found for job %s", job_id)
+        return ""
+
     async def _send_to_elevenlabs(self, event: BidAcceptedEvent, job_details: Any, job_metadata_uri: str = ""):
         """
         Build a JSON payload with job/bid details and send to ElevenLabs outbound call endpoint.
@@ -493,6 +528,9 @@ class BaseArchiveAgent(ABC):
             elif not isinstance(tags_value, str):
                 tags_value = str(tags_value) if tags_value is not None else ""
 
+            # Pass through the raw job payload (no LLM parsing needed)
+            raw_job_payload = metadata_doc.get("job", "")
+
             dynamic_vars = {
                 "jobId": event.job_id,
                 "acceptedBidId": event.bid_id,
@@ -505,6 +543,7 @@ class BaseArchiveAgent(ABC):
                 "jobMetadataUri": job_metadata_uri,
                 "bidMetadataUri": bid_metadata,
                 "txHash": event.tx_hash,
+                "job": raw_job_payload,
                 "time": metadata_doc.get("time", "8pm"),
                 "num_of_people": metadata_doc.get("party_size", metadata_doc.get("num_of_people", 4)),
                 "date": metadata_doc.get("date", "7th December"),

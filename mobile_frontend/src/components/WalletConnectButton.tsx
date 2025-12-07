@@ -6,6 +6,7 @@ import { formatUnits } from 'viem';
 
 const USDC_ADDRESS = '0x9f1Af8576f52507354eaF2Dc438a5333Baf2D09D';
 const NEOX_TESTNET_ID = 12227332;
+const BUTLER_ADDRESS = '0x741ae17d47d479e878adfb3c78b02db583c63d58';
 
 const truncateAddress = (address: string) => {
   if (!address) return '';
@@ -48,10 +49,10 @@ export const WalletConnectButton: React.FC = () => {
     address: USDC_ADDRESS,
     abi: erc20Abi,
     functionName: 'balanceOf',
-    args: address ? [address] : undefined,
+    args: [BUTLER_ADDRESS],
     chainId: NEOX_TESTNET_ID,
     query: {
-      enabled: !!address,
+      enabled: true,
       refetchInterval: 15000,
     },
   });
@@ -98,14 +99,13 @@ export const WalletConnectButton: React.FC = () => {
   };
 
   const balanceView = (() => {
-    if (!address) return { display: null, usd: null, loading: false };
     if (isBalLoading || isBalFetching) return { display: '…', usd: null, loading: true };
     if (balanceData === undefined) return { display: null, usd: null, loading: false };
     try {
       const formatted = formatUnits(balanceData ?? BigInt(0), 6);
       const num = Number.parseFloat(formatted);
       const main = Number.isFinite(num) ? num.toFixed(2) : formatted;
-      return { display: `${main} mUSDC`, usd: null, loading: false };
+      return { display: `${main} mUSDC (Butler)`, usd: null, loading: false };
     } catch (err) {
       console.info('balance format error', err);
       return { display: null, usd: null, loading: false };
@@ -119,7 +119,7 @@ export const WalletConnectButton: React.FC = () => {
           <div className="token-icon">$
           </div>
           <div className="token-text">
-            <span className="token-label">Balance</span>
+            <span className="token-label">Butler Balance</span>
             <span className="token-amount">{balanceView.display ?? '—'}</span>
           </div>
         </div>

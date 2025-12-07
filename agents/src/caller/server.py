@@ -10,6 +10,7 @@ FastAPI server that:
 import os
 import asyncio
 import logging
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -31,6 +32,8 @@ from ..shared.a2a import (
 from .agent import CallerAgent, create_caller_agent
 from ..shared.neofs import get_neofs_client
 from ..shared import neofs as neofs_module
+from ..shared.contracts import submit_delivery
+from ..shared.base_agent import ActiveJob
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -126,25 +129,57 @@ async def elevenlabs_webhook(request: Request):
     secret_expected = os.getenv("ELEVENLABS_WEBHOOK_SECRET")
     provided = request.headers.get("x-elevenlabs-signature") or request.headers.get("x-webhook-secret")
 
-    # Validate secret if configured
-    if secret_expected and provided != secret_expected:
-        logger.warning("❌ ElevenLabs webhook: invalid secret")
-        raise HTTPException(status_code=401, detail="invalid secret")
+    # Validate secret if configured (header must be present)
+    if secret_expected:
+        if not provided:
+            logger.warning("❌ ElevenLabs webhook: missing signature header")
+            raise HTTPException(status_code=401, detail="missing signature")
+        if provided != secret_expected:
+            logger.warning("❌ ElevenLabs webhook: invalid secret")
+            raise HTTPException(status_code=401, detail="invalid secret")
+
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode("utf-8") or "{}")
+    except Exception as e:
+        logger.warning(f"❌ ElevenLabs webhook: invalid json ({e})")
+        raise HTTPException(status_code=400, detail="invalid json")
+
+    event_type = payload.get("type")
+    event_timestamp = payload.get("event_timestamp")
+
+    # ElevenLabs wraps data inside "data"; keep backward compatibility with legacy shape
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else None
+    if not data:
+        data = payload
+        if not event_type:
+            event_type = "legacy"
+
+    logger.info(f"📨 ElevenLabs webhook type={event_type} payload={payload}")
+
+    # Extract known fields while tolerating schema changes
+    conversation_id = data.get("conversation_id") or data.get("conversationId")
+    call_sid = data.get("callSid") or data.get("call_sid")
+    status = data.get("status") or data.get("call_status")
+    to_number = data.get("to") or data.get("to_number") or ""
+    job_id = data.get("jobId") or data.get("job_id") or "unknown"
+    full_audio = data.get("full_audio") or data.get("fullAudio")
+
+    analysis = data.get("analysis") if isinstance(data.get("analysis"), dict) else None
+    transcript = data.get("transcript")
+    summary = None
+    if analysis:
+        summary = analysis.get("transcript_summary") or analysis.get("summary")
+    summary = summary or data.get("summary") or data.get("transcript_summary")
 
     try:
-        payload = await request.json()
-    except Exception:
-        payload = {"error": "invalid json"}
-
-    logger.info(f"📨 ElevenLabs webhook payload: {payload}")
-
-    # Extract known fields but keep full payload intact
-    conversation_id = payload.get("conversation_id") or payload.get("conversationId")
-    call_sid = payload.get("callSid") or payload.get("call_sid")
-    status = payload.get("status") or payload.get("call_status")
-    summary = payload.get("summary") or payload.get("analysis") or payload.get("transcript")
-    to_number = payload.get("to") or payload.get("to_number") or ""
-    job_id = payload.get("jobId") or payload.get("job_id") or "unknown"
+        if event_type == "post_call_audio" and not full_audio:
+            raise HTTPException(status_code=400, detail="missing full_audio for audio webhook")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"❌ ElevenLabs webhook: validation error {e}")
+        raise HTTPException(status_code=400, detail="invalid payload")
 
     # Prepare call result doc (will be stored to NeoFS; keep original payload untouched)
     call_result = {
@@ -154,7 +189,12 @@ async def elevenlabs_webhook(request: Request):
         "summary": summary,
         "to": to_number,
         "job_id": job_id,
+        "type": event_type,
+        "event_timestamp": event_timestamp,
         "received_at": __import__("datetime").datetime.utcnow().isoformat(),
+        "analysis": analysis,
+        "transcript": transcript,
+        "full_audio": bool(full_audio),  # avoid storing raw base64 twice; kept in payload
         "payload": payload,
     }
 
@@ -211,6 +251,43 @@ async def elevenlabs_webhook(request: Request):
         "status": status,
         "neofs_uri": neofs_uri,
     }
+
+
+# Simple confirmation webhook → submitDelivery on-chain
+class ConfirmationPayload(BaseModel):
+    confirmation_number: str
+
+
+@app.post("/webhooks/confirmation")
+async def confirmation_webhook(payload: ConfirmationPayload):
+    """
+    Accept a confirmation_number and submit it as delivery proof.
+    proof_hash = UTF-8 bytes of confirmation_number.
+    """
+    if not agent or not agent._contracts:
+        raise HTTPException(status_code=503, detail="Agent or contracts not initialized")
+
+    # Require exactly one active job to avoid ambiguity
+    if not agent.active_jobs:
+        raise HTTPException(status_code=404, detail="No active job to confirm")
+    if len(agent.active_jobs) > 1:
+        raise HTTPException(status_code=409, detail="Multiple active jobs; cannot infer job_id")
+
+    active: ActiveJob = next(iter(agent.active_jobs.values()))
+    job_id = active.job_id
+    proof_bytes = payload.confirmation_number.encode("utf-8")
+
+    try:
+        tx_hash = submit_delivery(agent._contracts, job_id, proof_bytes)
+        active.status = "completed"
+        return {
+            "submitted": True,
+            "job_id": job_id,
+            "tx_hash": tx_hash,
+        }
+    except Exception as e:
+        logger.error(f"❌ submit_delivery failed for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"submit_delivery failed: {e}")
 
 
 # A2A Endpoint

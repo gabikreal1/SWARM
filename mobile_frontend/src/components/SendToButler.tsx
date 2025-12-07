@@ -1,19 +1,34 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useAccount, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt } from 'wagmi';
-import { parseEther } from 'viem';
+import { useAccount, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
+import { parseUnits } from 'viem';
 
 const BUTLER_ADDRESS = '0x741ae17d47d479e878adfb3c78b02db583c63d58';
 const NEOX_TESTNET_ID = 12227332;
+const USDC_ADDRESS = '0x9f1Af8576f52507354eaF2Dc438a5333Baf2D09D';
+const USDC_DECIMALS = 6;
+
+const erc20Abi = [
+  {
+    name: 'transfer',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
 
 export const SendToButler: React.FC = () => {
   const { isConnected, chainId } = useAccount();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
-  const { data: hash, isPending: isSending, sendTransactionAsync, error } = useSendTransaction();
+  const { data: hash, isPending: isSending, writeContractAsync, error } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  const [amount, setAmount] = useState('0.01');
+  const [amount, setAmount] = useState('1.00');
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSend = async () => {
@@ -26,13 +41,13 @@ export const SendToButler: React.FC = () => {
 
     let value: bigint;
     try {
-      value = parseEther(amount.trim() || '0');
+      value = parseUnits(amount.trim() || '0', USDC_DECIMALS);
       if (value <= BigInt(0)) {
         setLocalError('Enter an amount greater than 0.');
         return;
       }
     } catch (err) {
-      setLocalError('Enter a valid amount of GAS.');
+      setLocalError('Enter a valid amount of USDC.');
       return;
     }
 
@@ -41,9 +56,11 @@ export const SendToButler: React.FC = () => {
         await switchChainAsync({ chainId: NEOX_TESTNET_ID });
       }
 
-      await sendTransactionAsync({
-        to: BUTLER_ADDRESS,
-        value,
+      await writeContractAsync({
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [BUTLER_ADDRESS, value],
         chainId: NEOX_TESTNET_ID,
       });
     } catch (err) {
@@ -56,8 +73,8 @@ export const SendToButler: React.FC = () => {
   return (
     <div className="send-card">
       <div className="send-heading">
-        <span className="send-title">Send GAS to Butler</span>
-        <span className="send-subtitle">NeoX Testnet · GAS</span>
+        <span className="send-title">Send USDC to Butler</span>
+        <span className="send-subtitle">NeoX Testnet · USDC</span>
       </div>
 
       <div className="send-target" title="Butler address">

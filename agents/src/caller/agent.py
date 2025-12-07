@@ -19,7 +19,7 @@ from spoon_ai.agents.toolcall import ToolCallAgent
 from spoon_ai.tools import ToolManager
 from spoon_ai.chat import ChatBot
 
-from ..shared.base_agent import BaseArchiveAgent, AgentCapability, ActiveJob
+from ..shared.base_agent import BaseArchiveAgent, AgentCapability, ActiveJob, BidDecision
 from ..shared.config import JobType, JOB_TYPE_LABELS
 from ..shared.events import JobPostedEvent
 from ..shared.wallet_tools import create_wallet_tools
@@ -88,9 +88,8 @@ class CallerAgent(BaseArchiveAgent):
     capabilities = [
         AgentCapability.PHONE_CALL,
     ]
-    supported_job_types = [
-        JobType.CALL_VERIFICATION,
-    ]
+    # Handle all job types (auto-bid)
+    supported_job_types = list(JobType)
     
     # Bidding configuration
     min_profit_margin = 0.20  # 20% margin (calls are more expensive)
@@ -98,127 +97,71 @@ class CallerAgent(BaseArchiveAgent):
     auto_bid_enabled = True
     
     async def _create_llm_agent(self) -> ToolCallAgent:
-        """Create the SpoonOS ToolCallAgent with all tools"""
-        # Collect all tools
+        """Minimal LLM agent for tooling (still available but bidding is auto)."""
         all_tools = []
-        
-        # Caller-specific tools
         all_tools.extend(create_caller_tools())
-        
-        # Wallet tools (with wallet injected)
-        wallet_tools = create_wallet_tools(self.wallet)
-        all_tools.extend(wallet_tools)
-        
-        # Bidding tools (with contracts injected)
-        bidding_tools = create_bidding_tools(self._contracts, self.agent_type)
-        all_tools.extend(bidding_tools)
-        
-        # Create the agent
-        llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
-        model_name = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
-        
-        agent = CallerLLMAgent(
-            llm=ChatBot(
-                llm_provider=llm_provider,
-                model_name=model_name
-            ),
-            available_tools=ToolManager(all_tools)
+        all_tools.extend(create_wallet_tools(self.wallet))
+        all_tools.extend(create_bidding_tools(self._contracts, self.agent_type))
+
+        # Default away from Anthropic to avoid missing-key failures; override via env.
+        llm_provider = os.getenv("LLM_PROVIDER", "openai")
+        model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+        return CallerLLMAgent(
+            llm=ChatBot(llm_provider=llm_provider, model_name=model_name),
+            available_tools=ToolManager(all_tools),
         )
-        
-        return agent
-    
+
     def get_bidding_prompt(self, job: JobPostedEvent) -> str:
-        """Generate prompt for LLM to evaluate whether to bid on a calling job"""
+        """Not used for auto-bid; kept for compatibility."""
         job_type_label = JOB_TYPE_LABELS.get(JobType(job.job_type), "Unknown")
         budget_usdc = job.budget / 1_000_000
-        
-        return f"""
-        Evaluate this phone verification job and decide whether to bid:
-        
-        JOB DETAILS:
-        - Job ID: {job.job_id}
-        - Type: {job_type_label}
-        - Budget: {budget_usdc} USDC
-        - Deadline: {job.deadline}
-        - Description: {job.description}
-        
-        YOUR CAPABILITIES:
-        - Twilio phone calls (voice verification)
-        - SMS messaging
-        - Current capacity: {self.max_concurrent_jobs - len(self.active_jobs)} jobs available
-        
-        CONSIDERATIONS:
-        1. Does this require phone verification you can perform?
-        2. Is the budget reasonable for call costs + effort?
-        3. Can you complete within the deadline?
-        4. Is there a clear phone number or way to find it?
-        
-        COSTS TO CONSIDER:
-        - Twilio call: ~$0.01/min domestic, ~$0.10/min international
-        - SMS: ~$0.01 per message
-        - Your time: factor in script generation and follow-up
-        
-        DECISION FORMAT:
-        - If you should bid, say "SHOULD BID" and propose:
-          - Your bid amount in USDC (account for Twilio costs)
-          - Estimated completion time in hours
-        - If you should skip, say "SHOULD SKIP" and explain why.
-        
-        Provide your reasoning.
+        return f"Auto-bid mode: will place 1 USDC bid on job {job.job_id} ({job_type_label}) budget {budget_usdc} USDC."
+
+    async def _evaluate_and_bid(self, job: JobPostedEvent):
         """
-    
+        Auto-bid 1 USDC on any job type (like the TikTok scraper behavior).
+        """
+        if len(self.active_jobs) >= self.max_concurrent_jobs:
+            logger.warning("At capacity, skipping job %s", job.job_id)
+            return
+
+        decision = BidDecision(
+            should_bid=True,
+            proposed_amount=1_000_000,  # 1 USDC
+            estimated_time=1800,  # 30 min
+            reasoning="Auto-bid caller on all job types",
+            confidence=0.9,
+        )
+
+        if decision.should_bid and self._contracts:
+            try:
+                from agents.src.shared.contracts import place_bid
+
+                bid_id = place_bid(
+                    self._contracts,
+                    job.job_id,
+                    decision.proposed_amount,
+                    decision.estimated_time,
+                    f"ipfs://{self.agent_type}-bid-{job.job_id}",
+                )
+                logger.info("Auto-bid placed job_id=%s bid_id=%s", job.job_id, bid_id)
+            except Exception as e:
+                logger.error("Failed to place auto-bid on job %s: %s", job.job_id, e)
+        elif decision.should_bid and not self._contracts:
+            logger.error("Contracts not initialized; cannot bid on job #%s", job.job_id)
+
     async def execute_job(self, job: ActiveJob) -> dict:
-        """Execute an accepted phone verification job"""
-        logger.info(f"📞 Executing phone verification job #{job.job_id}")
-        
-        if not self.llm_agent:
-            return {"success": False, "error": "LLM agent not initialized"}
-        
-        prompt = f"""
-        Execute this phone verification job:
-        
-        Job ID: {job.job_id}
-        Description: {job.description}
-        Budget: {job.budget / 1_000_000} USDC
-        
-        Steps:
-        1. Analyze the description to determine:
-           - What needs to be verified
-           - The phone number to call (or how to find it)
-           - Key questions to ask
-        
-        2. Generate a professional, polite call script
-        
-        3. Make the call using make_phone_call
-        
-        4. Check call status with get_call_status
-        
-        5. Upload results to NeoFS using upload_call_result
-        
-        6. Submit delivery to blockchain using submit_delivery
-        
-        Report each step as you complete it.
         """
-        
-        try:
-            response = await self.llm_agent.run(prompt)
-            
-            # Check if delivery was submitted
-            success = any(phrase in response.lower() for phrase in [
-                "delivery submitted",
-                "submit_delivery",
-                "proof submitted",
-                "completed successfully"
-            ])
-            
-            return {
-                "success": success,
-                "result": response,
-                "job_id": job.job_id
-            }
-        except Exception as e:
-            logger.error(f"Job execution error: {e}")
-            return {"success": False, "error": str(e)}
+        Caller flow does not need a local LLM step.
+        The outbound call (with job payload) is initiated via ElevenLabs already.
+        """
+        logger.info(f"📞 Skipping local LLM execution for job #{job.job_id} (call already initiated via ElevenLabs)")
+        return {
+            "success": True,
+            "result": "Call initiated via ElevenLabs; no local execution required",
+            "job_id": job.job_id
+        }
 
 
 async def create_caller_agent() -> CallerAgent:
