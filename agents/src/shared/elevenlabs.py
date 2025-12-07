@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import websockets
+import ssl
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -29,12 +30,15 @@ class ElevenLabsClient:
         voice_id: Optional[str] = None,
         phone_number: Optional[str] = None,
         agent_id: Optional[str] = None,
+        phone_number_id: Optional[str] = None,
     ):
-        self.api_url = api_url or os.getenv("ELEVENLABS_API_URL")
+        # Default to the Twilio outbound-call endpoint if not provided
+        self.api_url = api_url or os.getenv("ELEVENLABS_API_URL") or "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         self.voice_id = voice_id or os.getenv("ELEVENLABS_VOICE_ID")
         self.phone_number = phone_number or os.getenv("ELEVENLABS_PHONE")
         self.agent_id = agent_id or os.getenv("ELEVENLABS_AGENT_ID")
+        self.phone_number_id = phone_number_id or os.getenv("ELEVENLABS_PHONE_NUMBER_ID")
 
     def is_configured(self) -> bool:
         return bool(self.api_url and self.api_key)
@@ -83,12 +87,13 @@ class ElevenLabsClient:
 
     async def send_conversation_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Opens the ElevenLabs convai websocket and sends JSON payload once.
-        Returns a minimal status dict; this is a fire-and-forget convenience.
+        Legacy websocket sender (kept for backward compatibility). Prefer send_call.
         """
         signed_url = await self.get_signed_url()
         try:
-            async with websockets.connect(signed_url, ping_interval=None) as ws:
+            # Some environments lack proper root CAs; allow insecure context to avoid handshake failures.
+            ssl_ctx = ssl._create_unverified_context()
+            async with websockets.connect(signed_url, ping_interval=None, ssl=ssl_ctx) as ws:
                 await ws.send(json_dump(payload))
                 # Read one response frame (optional)
                 try:

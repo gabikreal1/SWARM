@@ -30,6 +30,8 @@ from .wallet import AgentWallet, create_wallet_from_env
 from .events import EventListener, JobPostedEvent, BidAcceptedEvent
 from .contracts import get_contracts, place_bid, get_job
 from .elevenlabs import ElevenLabsClient
+from .neofs import get_neofs_client
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -302,20 +304,36 @@ class BaseArchiveAgent(ABC):
             except Exception as e:
                 logger.error(f"Could not fetch job details: {e}")
         
+        # Safely unpack job state
+        job_state = job_details[0] if job_details and len(job_details) > 0 else None
+        bids = job_details[1] if job_details and len(job_details) > 1 else []
+
+        job_type_val = job_state[2] if job_state and len(job_state) > 2 else 0
+        job_description = job_state[1] if job_state and len(job_state) > 1 else ""
+        job_deadline = job_state[4] if job_state and len(job_state) > 4 else 0
+        raw_meta_uri = job_state[3] if job_state and len(job_state) > 3 else ""
+        if isinstance(raw_meta_uri, bytes):
+            try:
+                job_metadata_uri = raw_meta_uri.decode("utf-8").strip("\x00")
+            except Exception:
+                job_metadata_uri = ""
+        else:
+            job_metadata_uri = str(raw_meta_uri) if raw_meta_uri else ""
+
         # Track the active job
         active_job = ActiveJob(
             job_id=event.job_id,
             bid_id=event.bid_id,
-            job_type=job_details[1] if job_details else 0,
-            description=job_details[0] if job_details else "",
+            job_type=job_type_val,
+            description=job_description,
             budget=event.amount,
-            deadline=job_details[4] if job_details else 0,
+            deadline=job_deadline,
             status="accepted"
         )
         self.active_jobs[event.job_id] = active_job
         
         # Fire-and-forget: send metadata to ElevenLabs
-        asyncio.create_task(self._send_to_elevenlabs(event, job_details))
+        asyncio.create_task(self._send_to_elevenlabs(event, job_details, job_metadata_uri))
 
         # Start executing the job
         asyncio.create_task(self._execute_job_task(active_job))
@@ -378,10 +396,40 @@ class BaseArchiveAgent(ABC):
             "running": self._running,
         }
 
-    async def _send_to_elevenlabs(self, event: BidAcceptedEvent, job_details: Any):
+    async def _fetch_job_metadata(self, metadata_uri: str) -> dict:
         """
-        Build a JSON payload with job/bid details and send to ElevenLabs (convai websocket).
-        Uses mock defaults for user data as requested.
+        Fetch job metadata from NeoFS (neofs://cid/oid) or HTTP(S).
+        Returns parsed JSON dict or {} on failure.
+        """
+        if not metadata_uri:
+            return {}
+        try:
+            if metadata_uri.startswith("neofs://"):
+                _, rest = metadata_uri.split("neofs://", 1)
+                parts = rest.split("/", 1)
+                if len(parts) != 2:
+                    return {}
+                container_id, object_id = parts
+                client = get_neofs_client()
+                try:
+                    data = await client.download_object(object_id, container_id)
+                    import json as _json
+                    return _json.loads(data.decode("utf-8"))
+                finally:
+                    await client.close()
+            elif metadata_uri.startswith("http://") or metadata_uri.startswith("https://"):
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(metadata_uri)
+                    resp.raise_for_status()
+                    return resp.json()
+        except Exception as e:
+            logger.warning(f"Failed to fetch job metadata from {metadata_uri}: {e}")
+        return {}
+
+    async def _send_to_elevenlabs(self, event: BidAcceptedEvent, job_details: Any, job_metadata_uri: str = ""):
+        """
+        Build a JSON payload with job/bid details and send to ElevenLabs outbound call endpoint.
+        Pulls metadata from job_metadata_uri (NeoFS/HTTP) to populate dynamic variables.
         """
         client = ElevenLabsClient()
         if not client.is_configured():
@@ -422,34 +470,68 @@ class BaseArchiveAgent(ABC):
                     pass
 
             poster = ""
-            if job_state and len(job_state) >= 1:
-                poster = job_state[0]
+            job_description = ""
+            if job_state:
+                if len(job_state) >= 1:
+                    poster = job_state[0]
+                if len(job_state) >= 2:
+                    job_description = job_state[1]
 
-            payload = {
+            # Fetch metadata from URI and log for visibility
+            metadata_doc = await self._fetch_job_metadata(job_metadata_uri)
+            logger.info(
+                "📄 Parsed job metadata | job_id=%s uri=%s data=%s",
+                event.job_id,
+                job_metadata_uri,
+                metadata_doc,
+            )
+
+            # Build dynamic variables for the outbound call
+            tags_value = metadata_doc.get("tags", [])
+            if isinstance(tags_value, list):
+                tags_value = ", ".join([str(t) for t in tags_value])
+            elif not isinstance(tags_value, str):
+                tags_value = str(tags_value) if tags_value is not None else ""
+
+            dynamic_vars = {
                 "jobId": event.job_id,
                 "acceptedBidId": event.bid_id,
                 "poster": poster,
                 "bidder": bidder,
                 "priceUsdc": price_usdc,
                 "etaSeconds": eta_seconds,
-                "jobDescription": "",
-                "jobTags": [],
-                "jobMetadataUri": "",
+                "jobDescription": job_description,
+                "jobTags": tags_value,
+                "jobMetadataUri": job_metadata_uri,
                 "bidMetadataUri": bid_metadata,
                 "txHash": event.tx_hash,
-                # Dynamic vars requested
-                "time": "8pm",
-                "num_of_people": 4,
-                "date": "7th December",
-                "user_name": "katya",
-                "user": bidder,
-                # Optional phone / voice
-                "phoneNumber": client.phone_number,
-                "voiceId": client.voice_id,
+                "time": metadata_doc.get("time", "8pm"),
+                "num_of_people": metadata_doc.get("party_size", metadata_doc.get("num_of_people", 4)),
+                "date": metadata_doc.get("date", "7th December"),
+                "user_name": metadata_doc.get("user_name", "katya"),
+                "user": metadata_doc.get("user", bidder),
+                "phone_to_call": metadata_doc.get("phone_to_call", client.phone_number),
+                "notes": metadata_doc.get("notes", ""),
             }
 
-            logger.info(f"📞 Sending job #{event.job_id} bid #{event.bid_id} to ElevenLabs convai...")
-            resp = await client.send_conversation_payload(payload)
-            logger.info(f"✅ ElevenLabs convai response: {resp}")
+            payload = {
+                "agent_id": client.agent_id,
+                "agent_phone_number_id": client.phone_number_id,
+                "to_number": metadata_doc.get("phone_to_call", ""),
+                "authenticated": True,
+                "conversation_initiation_client_data": {
+                    "type": "conversation_initiation_client_data",
+                    "dynamic_variables": dynamic_vars,
+                },
+            }
+
+            # Fallback destination if metadata is missing
+            if not payload["to_number"]:
+                env_to = os.getenv("ELEVENLABS_TO_NUMBER") or client.phone_number
+                payload["to_number"] = env_to
+
+            logger.info(f"📞 Sending job #{event.job_id} bid #{event.bid_id} to ElevenLabs outbound call...")
+            resp = await client.send_call(payload)
+            logger.info(f"✅ ElevenLabs outbound response: {resp}")
         except Exception as e:
             logger.error(f"❌ Failed to send to ElevenLabs: {e}")

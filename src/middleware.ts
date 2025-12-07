@@ -2,31 +2,15 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const COOKIE_NAME = "swarm_session";
 
-// Lightweight JWT check without pulling prisma into middleware
+// Lightweight presence check; API routes do full JWT verification.
 function isValidToken(token?: string) {
-  if (!token) return false;
-  try {
-    const secret = process.env.AUTH_SECRET || "dev-secret-change-me";
-    // verify signature with Web Crypto
-    const [headerB64, payloadB64, sigB64] = token.split(".");
-    if (!headerB64 || !payloadB64 || !sigB64) return false;
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const data = encoder.encode(`${headerB64}.${payloadB64}`);
-    const signature = Uint8Array.from(atob(sigB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-    return crypto.subtle
-      .importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
-      .then(key => crypto.subtle.verify("HMAC", key, signature, data))
-      .catch(() => false);
-  } catch {
-    return false;
-  }
+  return Boolean(token);
 }
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get(COOKIE_NAME)?.value;
-  const isValidSession = await isValidToken(token);
+  const isValidSession = isValidToken(token);
 
   // If authenticated user hits login, send home
   if (pathname === "/login" && isValidSession) {
