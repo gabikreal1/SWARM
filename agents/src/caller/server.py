@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import uvicorn
+import httpx
 
 from ..shared.a2a import (
     A2AMessage, 
@@ -28,6 +29,8 @@ from ..shared.a2a import (
 )
 
 from .agent import CallerAgent, create_caller_agent
+from ..shared.neofs import get_neofs_client
+from ..shared import neofs as neofs_module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -117,14 +120,97 @@ async def get_active_jobs():
 async def elevenlabs_webhook(request: Request):
     """
     Receive ElevenLabs ConvAI/Twilio webhook callbacks.
-    For now, we log and return 200. Extend to push into processing pipeline.
+    Validates the shared secret if provided, extracts summary info,
+    uploads it to NeoFS, and returns the NeoFS URI.
     """
+    secret_expected = os.getenv("ELEVENLABS_WEBHOOK_SECRET")
+    provided = request.headers.get("x-elevenlabs-signature") or request.headers.get("x-webhook-secret")
+
+    # Validate secret if configured
+    if secret_expected and provided != secret_expected:
+        logger.warning("❌ ElevenLabs webhook: invalid secret")
+        raise HTTPException(status_code=401, detail="invalid secret")
+
     try:
         payload = await request.json()
     except Exception:
         payload = {"error": "invalid json"}
+
     logger.info(f"📨 ElevenLabs webhook payload: {payload}")
-    return {"received": True}
+
+    # Extract known fields but keep full payload intact
+    conversation_id = payload.get("conversation_id") or payload.get("conversationId")
+    call_sid = payload.get("callSid") or payload.get("call_sid")
+    status = payload.get("status") or payload.get("call_status")
+    summary = payload.get("summary") or payload.get("analysis") or payload.get("transcript")
+    to_number = payload.get("to") or payload.get("to_number") or ""
+    job_id = payload.get("jobId") or payload.get("job_id") or "unknown"
+
+    # Prepare call result doc (will be stored to NeoFS; keep original payload untouched)
+    call_result = {
+        "conversation_id": conversation_id,
+        "callSid": call_sid,
+        "status": status,
+        "summary": summary,
+        "to": to_number,
+        "job_id": job_id,
+        "received_at": __import__("datetime").datetime.utcnow().isoformat(),
+        "payload": payload,
+    }
+
+    neofs_uri = None
+    try:
+        client = get_neofs_client()
+        upload = await client.upload_call_result(
+            call_result,
+            job_id=str(job_id),
+            phone_number=to_number or "unknown",
+        )
+        await client.close()
+        neofs_uri = f"neofs://{upload.container_id}/{upload.object_id}"
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to upload call summary to NeoFS: {e}")
+
+    # Optionally persist to web app DB via API if configured
+    calls_api = os.getenv("CALL_SUMMARY_WEBHOOK_URL")
+    call_summary_secret = os.getenv("CALL_SUMMARY_SECRET") or secret_expected
+    if calls_api:
+        try:
+            # Add neofs_uri into the payload we forward, so DB has full content + archival pointer
+            payload_with_neofs = dict(payload)
+            payload_with_neofs["neofs_uri"] = neofs_uri
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    calls_api,
+                    json={
+                        "conversationId": conversation_id,
+                        "callSid": call_sid,
+                        "status": status,
+                        "summary": summary,
+                        "toNumber": to_number,
+                        "jobId": str(job_id),
+                        "neofsUri": neofs_uri,
+                        "payload": payload_with_neofs,
+                    },
+                    headers={
+                        "x-call-summary-secret": call_summary_secret or "",
+                    },
+                )
+                if resp.status_code >= 300:
+                    logger.warning(
+                        f"⚠️ Failed to persist call summary to web app: {resp.status_code} {resp.text}"
+                    )
+        except Exception as e:
+            logger.warning(f"⚠️ Error posting call summary to web app: {e}")
+
+    return {
+        "received": True,
+        "conversation_id": conversation_id,
+        "callSid": call_sid,
+        "status": status,
+        "neofs_uri": neofs_uri,
+    }
 
 
 # A2A Endpoint

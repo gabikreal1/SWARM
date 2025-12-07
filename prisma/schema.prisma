@@ -49,3 +49,16 @@ model Order {
   createdAt     DateTime @default(now())
 }
 
+model CallSummary {
+  id             Int      @id @default(autoincrement())
+  conversationId String?  @db.Text
+  callSid        String?  @db.Text
+  status         String?  @db.Text
+  summary        String?  @db.Text
+  toNumber       String?  @db.Text
+  jobId          String?  @db.Text
+  neofsUri       String?  @db.Text
+  payload        Json?
+  createdAt      DateTime @default(now())
+}
+
