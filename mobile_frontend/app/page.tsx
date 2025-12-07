@@ -5,6 +5,7 @@ import { VoiceAgent } from '../src/components/VoiceAgent';
 import { Sidebar } from '../src/components/Sidebar';
 import { WelcomeHeading } from '../src/components/WelcomeHeading';
 import { WalletConnectButton } from '../src/components/WalletConnectButton';
+import { SendToButler } from '../src/components/SendToButler';
 import './globals.css';
 
 export default function HomePage() {
@@ -55,6 +56,11 @@ export default function HomePage() {
             <WalletConnectButton />
           </div>
       </header>
+
+      <div className="send-card-wrapper">
+        <SendToButler />
+      </div>
+
       <section className="sphere-section flex-1 flex flex-col overflow-hidden">
         <div className="flex flex-col flex-1 overflow-hidden">
         <div className="flex flex-col items-center flex-none pb-4">

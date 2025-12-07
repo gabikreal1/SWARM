@@ -35,12 +35,12 @@ async def main():
     # Start event listener + auto-bid loop
     await agent.start()
     status = agent.get_status()
-    logging.info(f"TikTok agent running: {status}")
+    logging.info(f"🚀 TikTok agent is running: {status}")
     try:
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        agent.stop()
+        await agent.stop()
         logging.info("TikTok agent stopped")
 
 

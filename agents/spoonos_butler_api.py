@@ -10,7 +10,7 @@ import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from dotenv import load_dotenv
 
 # Add SWARM root to path
@@ -25,7 +25,7 @@ from agents.src.shared.contracts import (
     accept_bid,
     ContractInstances,
 )
-from agents.neofs_helper import upload_job_metadata
+from agents.src.shared.neofs import NeoFSClient, NeoFSConfig, ObjectAttribute
 from qdrant_client import QdrantClient
 from mem0 import MemoryClient
 
@@ -47,6 +47,12 @@ contracts: Optional[ContractInstances] = None
 slot_filler: Optional[SlotFiller] = None
 qdrant_client: Optional[QdrantClient] = None
 mem0_client: Optional[MemoryClient] = None
+neofs_client: Optional[NeoFSClient] = None
+best_bids: Dict[int, Dict] = {}
+BUTLER_WALLET_ADDRESS = os.getenv(
+    "BUTLER_WALLET_ADDRESS",
+    "0x741ae17d47d479e878adfb3c78b02db583c63d58",
+)
 
 
 class InquireRequest(BaseModel):
@@ -65,12 +71,22 @@ class ConfirmRequest(BaseModel):
     bidId: int
 
 
+class PaymentConfirmRequest(BaseModel):
+    txHash: str
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize blockchain, slot filler, and memory clients."""
-    global contracts, slot_filler, qdrant_client, mem0_client
+    global contracts, slot_filler, qdrant_client, mem0_client, neofs_client
 
     print("🚀 Starting Spoonos Butler API...")
+
+    # Log core env presence (obscure values not printed)
+    print(f"🌐 NEOX RPC: {os.getenv('NEOX_RPC_URL')}")
+    print(f"🪙 Contracts loaded: {bool(os.getenv('ORDERBOOK_ADDRESS'))}")
+    print(f"📦 NeoFS Gateway: {os.getenv('NEOFS_REST_GATEWAY')}")
+    print(f"📦 NeoFS Container: {os.getenv('NEOFS_CONTAINER_ID')}")
 
     # Initialize Contracts
     private_key = os.getenv("NEOX_PRIVATE_KEY")
@@ -80,6 +96,8 @@ async def startup_event():
         try:
             contracts = get_contracts(private_key)
             print("✅ Connected to NeoX Blockchain")
+            print(f"🧾 OrderBook: {contracts.order_book.address}")
+            print(f"🧾 Escrow: {contracts.escrow.address}")
 
             # Auto-approve USDC for Escrow if needed
             if contracts.account:
@@ -91,6 +109,8 @@ async def startup_event():
                     print("🔄 Approving USDC for Escrow...")
                     approve_usdc(contracts, escrow_address, 2**256 - 1)
                     print("✅ USDC Approved")
+                else:
+                    print("✅ USDC allowance already sufficient")
         except Exception as e:
             print(f"❌ Failed to connect to blockchain: {e}")
 
@@ -107,6 +127,20 @@ async def startup_event():
         api_key=os.getenv("QDRANT_API_KEY"),
     )
     mem0_client = MemoryClient(api_key=os.getenv("MEM0_API_KEY"))
+
+    # Initialize NeoFS client (shared tools)
+    try:
+        neofs_gateway = os.getenv("NEOFS_REST_GATEWAY", "https://rest.fs.neo.org")
+        neofs_container = os.getenv("NEOFS_CONTAINER_ID")
+        if not neofs_container:
+            print("⚠️ NEOFS_CONTAINER_ID not set. NeoFS uploads will be disabled.")
+        else:
+            neofs_client = NeoFSClient(
+                NeoFSConfig(gateway_url=neofs_gateway, container_id=neofs_container)
+            )
+            print(f"✅ NeoFS client ready (gateway {neofs_gateway}, container {neofs_container})")
+    except Exception as e:
+        print(f"⚠️ NeoFS client init failed: {e}")
 
 
 @app.get("/")
@@ -156,25 +190,16 @@ async def inquire(request: InquireRequest):
             missing_slots, questions, chosen_tool = [], [], "tiktok_scrape"
 
         if missing_slots:
-            return {
-                "status": "question",
-                "text": questions[0] if questions else f"I need {missing_slots[0]}",
-                "missing_slots": missing_slots,
-                "tool": chosen_tool,
-            }
+            question_text = questions[0] if questions else f"I need {missing_slots[0]}."
+            return {"text": question_text}
 
         return {
-            "status": "ready",
-            "text": f"I have all details for {chosen_tool}. Shall I get a quote?",
-            "slots": current_slots,
-            "tool": chosen_tool,
-            "description": f"{chosen_tool} for {current_slots}",
-            "tags": [chosen_tool],
+            "text": f"I have all details for {chosen_tool} ({current_slots}). Say 'get a quote' to proceed."
         }
 
     except Exception as e:
         print(f"Error in inquire: {e}")
-        return {"status": "error", "text": "I'm having trouble understanding. Could you repeat?"}
+        return {"text": "I'm having trouble understanding. Could you repeat?"}
 
 
 @app.post("/api/spoonos/quote")
@@ -183,19 +208,33 @@ async def get_quote(request: QuoteRequest):
     print(f"📥 Quote Request: {request.description}")
     if not contracts:
         raise HTTPException(503, "Blockchain not connected")
+    if not neofs_client:
+        raise HTTPException(503, "NeoFS not configured")
 
     # 1) Upload job metadata to NeoFS
     print("📤 Uploading job metadata to NeoFS...")
     try:
-        result = upload_job_metadata(
-            tool=request.tags[0] if request.tags else "unknown",
-            parameters={"description": request.description},
-            poster=contracts.account.address,
-            requirements={"deadline": request.deadline},
+        tool_name = request.tags[0] if request.tags else "unknown"
+        poster_addr = contracts.account.address if contracts.account else "unknown"
+        metadata = {
+            "tool": tool_name,
+            "parameters": {"description": request.description},
+            "poster": poster_addr,
+            "requirements": {"deadline": request.deadline},
+            "posted_at": int(time.time()),
+        }
+
+        upload_result = await neofs_client.upload_json(
+            data=metadata,
+            filename=f"job_{int(time.time())}.json",
+            additional_attributes=[
+                ObjectAttribute(key="type", value="job_metadata"),
+                ObjectAttribute(key="tool", value=tool_name),
+                ObjectAttribute(key="poster", value=poster_addr),
+            ],
         )
-        if not result:
-            raise HTTPException(500, "Failed to upload metadata to NeoFS")
-        object_id, metadata_uri = result
+
+        metadata_uri = f"neofs://{upload_result.container_id}/{upload_result.object_id}"
         print(f"✅ Metadata uploaded: {metadata_uri}")
     except Exception as e:
         print(f"❌ NeoFS Upload Failed: {e}")
@@ -216,8 +255,8 @@ async def get_quote(request: QuoteRequest):
         raise HTTPException(500, f"Failed to post job: {e}")
 
     # 3) Wait briefly for bids
-    print("⏳ Waiting for bids (8s)...")
-    await asyncio.sleep(8)
+    print("⏳ Waiting for bids (60s)...")
+    await asyncio.sleep(60)
 
     # 4) Poll bids
     try:
@@ -227,10 +266,11 @@ async def get_quote(request: QuoteRequest):
         valid_bids = []
         for bid in bids:
             # Bid: (id, jobId, bidder, price, deliveryTime, reputation, metadataURI, responseURI, accepted, createdAt)
+            price_usd = float(bid[3]) / 1_000_000 if bid[3] is not None else 0.0
             valid_bids.append(
                 {
                     "id": bid[0],
-                    "price": bid[3],
+                    "price": price_usd,
                     "bidder": bid[2],
                     "reputation": bid[5],
                 }
@@ -238,19 +278,20 @@ async def get_quote(request: QuoteRequest):
 
         if not valid_bids:
             return {
-                "status": "no_bids",
-                "text": "No agents responded yet. I'll keep checking.",
-                "jobId": job_id,
+                "text": f"I posted your job (id {job_id}) but no bids yet. I will keep watching; you can ask me to check again later."
             }
 
         best_bid = sorted(valid_bids, key=lambda x: x["price"])[0]
+        best_bids[job_id] = {
+            "bid_id": best_bid["id"],
+            "price_micro": int(round(best_bid["price"] * 1_000_000)),
+            "bidder": best_bid["bidder"],
+        }
         return {
-            "status": "quoted",
-            "text": f"Best offer is {best_bid['price']} USDC. Shall I confirm?",
-            "jobId": job_id,
-            "bidId": best_bid["id"],
-            "price": best_bid["price"],
-            "agent": best_bid["bidder"],
+            "text": (
+                f"I posted your job (id {job_id}). Best offer is {best_bid['price']:.2f} USDC "
+                f"from {best_bid['bidder']} (bid id {best_bid['id']}). Say 'confirm bid {best_bid['id']}' to lock it."
+            )
         }
 
     except Exception as e:
@@ -266,6 +307,10 @@ async def confirm_bid(request: ConfirmRequest):
         raise HTTPException(503, "Blockchain not connected")
 
     try:
+        print(f"🧾 OrderBook address: {contracts.order_book.address}")
+        print(f"🧾 Escrow address: {contracts.escrow.address}")
+        print(f"👤 Signer: {contracts.account.address if contracts.account else 'n/a'}")
+
         tx = accept_bid(
             contracts,
             job_id=request.jobId,
@@ -273,14 +318,84 @@ async def confirm_bid(request: ConfirmRequest):
             response_uri="ipfs://response",
         )
         print(f"✅ Bid Accepted: {tx}")
+        explorer_base = os.getenv("EXPLORER_BASE_URL", "https://neoxplorer.io/tx/")
+        explorer_url = f"{explorer_base.rstrip('/')}/{tx}"
+        print(f"🔗 Explorer: {explorer_url}")
         return {
-            "status": "success",
-            "text": "Bid accepted. Funds locked in escrow.",
-            "tx": tx,
+            "text": (
+                f"Confirmed bid {request.bidId} for job {request.jobId}. "
+                f"Tx: {tx}. Explorer: {explorer_url}"
+            )
         }
     except Exception as e:
         print(f"❌ Accept Bid Failed: {e}")
         raise HTTPException(500, f"Failed to accept bid: {e}")
+
+
+@app.post("/api/spoonos/confirm-payment")
+async def confirm_payment(request: PaymentConfirmRequest):
+    """Verify user mUSDC transfer to Butler, then accept the cached best bid on-chain."""
+    if not contracts:
+        raise HTTPException(503, "Blockchain not connected")
+
+    if not best_bids:
+        raise HTTPException(400, "No cached bid available to confirm")
+
+    # Use the most recent job's best bid
+    latest_job_id = sorted(best_bids.keys())[-1]
+    stored = best_bids[latest_job_id]
+    bid_id = stored.get("bid_id")
+    expected_amount = stored.get("price_micro")
+
+    try:
+        tx = contracts.w3.eth.get_transaction(request.txHash)
+    except Exception as e:
+        raise HTTPException(400, f"Unable to fetch transaction: {e}")
+
+    if tx.to is None or tx.to.lower() != contracts.usdc.address.lower():
+        raise HTTPException(400, "Transaction is not to USDC contract")
+
+    try:
+        fn, params = contracts.usdc.decode_function_input(tx.input)
+    except Exception as e:
+        raise HTTPException(400, f"Cannot decode tx input: {e}")
+
+    if fn.fn_name != "transfer":
+        raise HTTPException(400, "Transaction is not a USDC transfer")
+
+    to_addr = params.get("to")
+    value = params.get("value")
+
+    if to_addr.lower() != BUTLER_WALLET_ADDRESS.lower():
+        raise HTTPException(400, "USDC transfer not sent to Butler wallet")
+
+    if expected_amount and int(value) < int(expected_amount):
+        raise HTTPException(400, "Transferred amount is less than required bid price")
+
+    print(
+        f"✅ Payment verified: from {tx['from']} to {to_addr} amount {value} (expected >= {expected_amount})"
+    )
+
+    try:
+        tx_hash = accept_bid(
+            contracts,
+            job_id=latest_job_id,
+            bid_id=bid_id,
+            response_uri="ipfs://response",
+        )
+        explorer_base = os.getenv("EXPLORER_BASE_URL", "https://neoxplorer.io/tx/")
+        explorer_url = f"{explorer_base.rstrip('/')}/{tx_hash}"
+        return {
+            "text": (
+                f"Payment received and bid {bid_id} accepted for job {latest_job_id}. "
+                f"Tx: {tx_hash}. Explorer: {explorer_url}"
+            ),
+            "tx": tx_hash,
+            "explorer": explorer_url,
+        }
+    except Exception as e:
+        print(f"❌ Accept Bid after payment failed: {e}")
+        raise HTTPException(500, f"Failed to accept bid after payment: {e}")
 
 
 if __name__ == "__main__":
