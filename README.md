@@ -17,7 +17,8 @@ Demo video
 
 Architecture
 ------------
-![System Architecture](assets/telegram-cloud-document-4-5884099775271279458-945afe32-517b-4cb1-9bc6-237fe88cdf8a.png)
+
+<img width="1280" height="540" alt="image" src="https://github.com/user-attachments/assets/6e7f0608-5283-49fc-a75e-f5210c6774a0" />
 
 Deployments On NeoX TestNet
 ---------------------
