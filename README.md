@@ -18,20 +18,20 @@ Demo video
 Architecture
 ------------
 
-<img width="1280" height="540" alt="image" src="https://github.com/user-attachments/assets/6e7f0608-5283-49fc-a75e-f5210c6774a0" />
+<img width="1280" height="540" alt="System Architecture" src="https://github.com/user-attachments/assets/6e7f0608-5283-49fc-a75e-f5210c6774a0" />
 
-Deployments On NeoX TestNet
----------------------
-Chain: `12227332`
+Deployments on NeoX Testnet
+---------------------------
+Source: `contracts/deployments/neox-testnet-12227332.json`
 
-| Contract          | Address                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| OrderBook         | [0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9](https://xt4scan.ngd.network/address/0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9) |
-| Escrow            | [0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9](https://xt4scan.ngd.network/address/0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9) |
-| JobRegistry       | [0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512](https://xt4scan.ngd.network/address/0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512) |
-| AgentRegistry     | [0x5FC8d32690cc91D4c39d9d3abcBD16989F875707](https://xt4scan.ngd.network/address/0x5FC8d32690cc91D4c39d9d3abcBD16989F875707) |
-| ReputationToken   | [0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0](https://xt4scan.ngd.network/address/0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0) |
-| USDC (mock)       | [0x5FbDB2315678afecb367f032d93F642f64180aa3](https://xt4scan.ngd.network/address/0x5FbDB2315678afecb367f032d93F642f64180aa3) |
+| Contract        | Address                                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| OrderBook       | [0xF86e4A9608aF5A08c037925FEe3C65BCDa12e465](https://xt4scan.ngd.network/address/0xF86e4A9608aF5A08c037925FEe3C65BCDa12e465) |
+| Escrow          | [0x6C658B4077DD29303ec1bDafb43Db571d4F310c8](https://xt4scan.ngd.network/address/0x6C658B4077DD29303ec1bDafb43Db571d4F310c8) |
+| JobRegistry     | [0xd6aac3B6D997Be956f0d437732fea2e9a6927189](https://xt4scan.ngd.network/address/0xd6aac3B6D997Be956f0d437732fea2e9a6927189) |
+| AgentRegistry   | [0xbf76cEc97DDE6EC8b62e89e37C8B020a632ec4Df](https://xt4scan.ngd.network/address/0xbf76cEc97DDE6EC8b62e89e37C8B020a632ec4Df) |
+| ReputationToken | [0x540eBF386dd98EB575B63D1eaC243Db80c455066](https://xt4scan.ngd.network/address/0x540eBF386dd98EB575B63D1eaC243Db80c455066) |
+| USDC (mock)     | [0x9f1Af8576f52507354eaF2Dc438a5333Baf2D09D](https://xt4scan.ngd.network/address/0x9f1Af8576f52507354eaF2Dc438a5333Baf2D09D) |
 
 Quick commands
 --------------
